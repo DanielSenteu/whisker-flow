@@ -114,9 +114,11 @@ app.whenReady().then(() => {
   // ---- screen glance: one screenshot, sent to Gemini only when asked, never stored ----
   ipcMain.handle('screen:glance', async () => {
     try {
-      if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') === 'denied') {
+      const before = process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
+      console.log('[glance] screen access status:', before)
+      if (before === 'denied') {
         void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
-        return { ok: false as const, error: 'permission' }
+        return { ok: false as const, error: `permission (${before})` }
       }
       petWin?.setContentProtection(true) // keep the pet itself out of the screenshot
       let jpeg: Buffer
@@ -129,9 +131,10 @@ app.whenReady().then(() => {
       } finally {
         petWin?.setContentProtection(false)
       }
-      if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+      const after = process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
+      if (after !== 'granted') {
         void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
-        return { ok: false as const, error: 'permission' }
+        return { ok: false as const, error: `permission (${after})` }
       }
       const p = loadProfile()
       return { ok: true as const, text: await describeScreen(jpeg.toString('base64'), p?.name ?? 'Buddy', p?.species ?? 'dog') }

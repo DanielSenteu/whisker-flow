@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "app": "electron-vite build && open -n node_modules/electron/dist/Electron.app --args \"$PWD\""
   },
   "dependencies": {
     "puppeteer-core": "^25.16.0",

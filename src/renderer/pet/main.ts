@@ -719,7 +719,7 @@ async function glance(): Promise<void> {
   const r = await window.wf.glance()
   if (r.ok) {
     say(r.text, Math.max(7000, r.text.length * 90))
-  } else if (r.error === 'permission') {
+  } else if (r.error.startsWith('permission')) {
     say("I need screen recording permission to look. I opened the settings, then restart me!", 7000)
   } else {
     say("Hmm, I couldn't see your screen just now.", 4000)
