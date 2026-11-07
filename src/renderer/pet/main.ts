@@ -99,8 +99,22 @@ async function loadStill(name: State): Promise<void> {
   stills[name] = await createImageBitmap(keyBuffer(sampleKey()))
 }
 
-function waitFor(el: HTMLVideoElement, ev: string): Promise<void> {
-  return new Promise((res) => el.addEventListener(ev, () => res(), { once: true }))
+function waitFor(el: HTMLVideoElement, ev: string, timeoutMs = 0): Promise<void> {
+  return new Promise((res) => {
+    el.addEventListener(ev, () => res(), { once: true })
+    if (timeoutMs > 0) setTimeout(res, timeoutMs) // never hang if an event doesn't come
+  })
+}
+
+/** Rewind a preloaded clip to its first frame and wait until it is really ready to play (events fire once, so wait for the seek). */
+async function prime(v: HTMLVideoElement): Promise<void> {
+  v.pause()
+  if (v.currentTime > 0.001) {
+    const seeked = waitFor(v, 'seeked', 1200)
+    v.currentTime = 0
+    await seeked
+  }
+  if (v.readyState < 2) await waitFor(v, 'canplay', 1500)
 }
 
 /** Decode an idle clip once into keyed frames so it can be played forward + backward with no seam. */
@@ -111,7 +125,7 @@ async function predecodeIdle(state: State): Promise<void> {
   v.muted = true
   v.src = URL.createObjectURL(blob)
   await waitFor(v, 'loadeddata')
-  const fps = 12
+  const fps = 20
   const count = Math.max(2, Math.floor(v.duration * fps))
   const frames: ImageBitmap[] = []
   let dKey = 0
@@ -196,8 +210,7 @@ async function playClip(name: string): Promise<boolean> {
   const my = epoch
   v.loop = false
   v.playbackRate = RATE[name] ?? 1.4
-  v.currentTime = 0
-  if (v.readyState < 2) await waitFor(v, 'loadeddata')
+  await prime(v)
   if (my !== epoch) return true // cut while loading
   const ended = new Promise<void>((res) => {
     v.addEventListener('ended', () => res(), { once: true })
@@ -221,8 +234,7 @@ async function startLoop(name: string, my: number): Promise<boolean> {
   if (!v) return false
   v.loop = false
   v.playbackRate = 0.6
-  v.currentTime = 0
-  if (v.readyState < 2) await waitFor(v, 'loadeddata')
+  await prime(v)
   if (my !== epoch) return false
   activeVideo = v
   await v.play()
@@ -237,10 +249,11 @@ async function goTo(target: State, my: number): Promise<void> {
     const next = STATES[i + (STATES.indexOf(target) > i ? 1 : -1)]
     landing = next
     const ok = await playClip(`${current}2${next}`)
+    if (my !== epoch) return // cut short: begin() has already moved us to the pose this clip was heading for
     if (!ok) hop = 0.001 // no clip yet: hop to the new pose instead
-    if (landing) current = landing
+    current = next
     landing = null
-    setMode({ kind: 'idle' })
+    // no switch back to idle here: the finished clip keeps showing its last frame, so a chained clip crossfades straight on
   }
 }
 
@@ -252,24 +265,35 @@ async function action(name: string, my: number): Promise<void> {
   if (my === epoch) setMode({ kind: 'idle' })
 }
 
+let restTimer = 0
 /** Latest command wins: cut whatever is playing (snapping to its end pose) and start the new one right away. */
 function begin(job: (my: number) => Promise<void>): void {
+  window.clearTimeout(restTimer)
   epoch++
+  const my = epoch
   if (landing) {
     current = landing
     landing = null
   }
   cancelPlay?.()
   cancelPlay = null
-  activeVideo?.pause()
+  activeVideo?.pause() // the canvas keeps showing the paused frame until the next clip takes over: no flash of idle
   if (walk) {
     const done = walk.done
     walk = null
     done()
   }
   if (ball.state === 'carried' || ball.state === 'grab') dropBall()
-  setMode({ kind: 'idle' })
-  void job(epoch).catch((e) => console.warn('[anim]', e))
+  void job(my)
+    .catch((e) => console.warn('[anim]', e))
+    .finally(() => {
+      if (my !== epoch) return
+      if (!walk && mode.kind === 'video') setMode({ kind: 'idle' })
+      // the pet's resting pose is standing: after a while it gets up from a sit (or wakes from a nap)
+      if (current !== 'stand') {
+        restTimer = window.setTimeout(() => begin((m) => goTo('stand', m)), current === 'lie' ? 40000 : 10000)
+      }
+    })
 }
 
 // ======================================================================
@@ -667,7 +691,6 @@ function handleIntent(i: Intent): void {
 let taskRunning = false
 function startTask(goal: string): void {
   taskRunning = true
-  begin((my) => goTo('sit', my))
   void window.wf.runTask(goal)
 }
 window.wf.onAgent((e) => {
@@ -795,7 +818,7 @@ function frame(now: number): void {
     if (frames && frames.length > 1) {
       // seamless ping-pong loop
       idleClock += dt
-      if (idleClock > 1 / 12) {
+      if (idleClock > 1 / 20) {
         idleClock = 0
         idleI += idleDir
         if (idleI >= frames.length - 1) idleDir = -1
@@ -833,6 +856,12 @@ function frame(now: number): void {
   requestAnimationFrame(frame)
 }
 
+// debug hook (used to verify transitions from a script; harmless otherwise)
+;(window as unknown as { __wf: unknown }).__wf = {
+  run,
+  state: () => ({ clips: clipVid.size, idles: Object.keys(idle).length, mode: mode.kind, current, fadeT: Math.round(fadeT * 100) / 100, epoch, walking: !!walk })
+}
+
 // ======================================================================
 //  Boot
 // ======================================================================
@@ -848,8 +877,14 @@ void (async () => {
     mouth.x = anchor.x * W
     mouth.y = anchor.y * H
   }
-  for (const a of await window.wf.assets()) await registerAsset(a)
   requestAnimationFrame(frame)
+  // transitions and actions first (instant to register), then decode the idle loops in the background:
+  // blocking on those left every command without a clip for the first 30 seconds
+  const assets = await window.wf.assets()
+  for (const a of assets.filter((x) => !x.startsWith('clip:idle_'))) await registerAsset(a)
+  void (async () => {
+    for (const a of assets.filter((x) => x.startsWith('clip:idle_'))) await registerAsset(a)
+  })()
   window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me, or hold me to talk.`, 4500), 1000)
 
   // pre-generate the pet's stock lines so they play instantly (cached on disk by the main process)

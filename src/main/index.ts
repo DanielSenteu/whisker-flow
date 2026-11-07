@@ -9,6 +9,7 @@ import { activate, archiveCurrent, createBase, demoBase, hasBase, listAssets, li
 import type { PetProfile } from '../shared/types'
 
 loadEnv()
+if (process.env.WF_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.WF_DEBUG_PORT)
 
 const profilePath = (): string => join(app.getPath('userData'), 'pet-profile.json')
 
