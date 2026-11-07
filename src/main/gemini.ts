@@ -350,7 +350,9 @@ export async function analyzeScreen(jpegBase64: string, petName: string, species
                 '"goal": the complete instruction for the pack, including the specific names, places or topics visible on screen (empty if no offer). ' +
                 '"label": a 2 to 4 word button label for the offer, like "Find the best one" (empty if no offer). ' +
                 'Good offers are about the TOPIC of what is on screen and can be answered from the public web: places to eat or visit, products to compare, trips, news, facts, a concept the user is reading about, an error message or library to look up. ' +
-                'The pack cannot see the user\'s private files or code, so never offer to summarize, review or continue what is on the screen itself. If the screen is code, a terminal or an editor, offer only to look up a specific library, error or concept that is visible, otherwise set has_offer to false. ' +
+                'The pack cannot see the screen or any files itself, so a job must be self-contained: put everything it needs into "goal". ' +
+                'If the screen shows a short piece of writing the user is working on (an essay, intro, paragraph, email or post draft), a great offer is to improve it (a stronger intro, tighter wording, a rewrite): in that case copy the visible text VERBATIM into "goal". ' +
+                'If the screen is code, a terminal or a code editor, offer only to look up a specific library, error or concept that is visible, otherwise set has_offer to false. ' +
                 'If the screen shows anything private (passwords, banking, personal messages, health or other sensitive details), set has_offer to false and keep "say" friendly and vague without mentioning any private details.'
             }
           ]
