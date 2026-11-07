@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
 import { interpretAudio } from './gemini'
 import { speak } from './eleven'
-import { createBase, hasBase, listAssets, readAsset, resetPetFiles, runPipeline } from './pipeline'
+import { createBase, hasBase, listAssets, readAnchor, readAsset, resetPetFiles, runPipeline } from './pipeline'
 import type { PetProfile } from '../shared/types'
 
 loadEnv()
@@ -106,6 +106,7 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('pet:assets', () => listAssets())
+  ipcMain.handle('pet:anchor', () => readAnchor())
   ipcMain.handle('pet:file', (_e, v: { kind: 'still' | 'clip'; name: string }) => {
     const buf = readAsset(v.kind, v.name)
     return buf ? new Uint8Array(buf) : null

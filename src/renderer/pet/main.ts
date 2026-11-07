@@ -16,6 +16,14 @@ buf.width = W
 buf.height = H
 const bctx = buf.getContext('2d', { willReadFrequently: true })!
 
+// snapshot of the previous frame: crossfaded away whenever the pose/clip changes, so nothing ever "snaps"
+const snap = document.createElement('canvas')
+snap.width = W
+snap.height = H
+const sctx = snap.getContext('2d')!
+let fadeT = 0
+const FADE = 0.18
+
 let profile: PetProfile
 
 // ---- the stage: the pet walks along the bottom edge of the screen ----
@@ -72,7 +80,8 @@ const STATES: State[] = ['stand', 'sit', 'lie'] // order along the "ladder"
 
 const stills: Partial<Record<State, ImageBitmap>> = {}
 const idle: Partial<Record<State, ImageBitmap[]>> = {}
-const clipUrl = new Map<string, string>()
+const clipVid = new Map<string, HTMLVideoElement>()
+const clipKey = new Map<string, number>()
 
 async function fileBlob(kind: 'still' | 'clip', name: string, type: string): Promise<Blob | null> {
   const bytes = await window.wf.file(kind, name)
@@ -126,8 +135,20 @@ async function registerAsset(asset: string): Promise<void> {
       await predecodeIdle(name.slice(5) as State)
     } else {
       const blob = await fileBlob('clip', name, 'video/mp4')
-      if (blob) clipUrl.set(name, URL.createObjectURL(blob))
+      if (blob) {
+        // one preloaded element per clip: starting a clip is instant, no src swap, no frozen first frame
+        const v = document.createElement('video')
+        v.muted = true
+        v.playsInline = true
+        v.preload = 'auto'
+        v.src = URL.createObjectURL(blob)
+        clipVid.set(name, v)
+      }
     }
+  } else if (kind === 'anchor') {
+    const a = await window.wf.anchor()
+    if (a) mouth.y = a.y * H
+    if (a) mouth.x = a.x * W
   }
 }
 
@@ -135,13 +156,17 @@ async function registerAsset(asset: string): Promise<void> {
 //  Playback + state machine
 // ======================================================================
 let current: State = 'stand'
-type Mode = { kind: 'idle' } | { kind: 'video'; dKey: number; loopFrom?: number }
+type Mode = { kind: 'idle' } | { kind: 'video'; v: HTMLVideoElement; dKey: number; loopFrom?: number }
 let mode: Mode = { kind: 'idle' }
 let hop = 0 // procedural fallback when a clip is missing (seconds into the hop, 0 = off)
 
-const video = document.createElement('video')
-video.muted = true
-video.playsInline = true
+/** Change what is on screen, crossfading from whatever was showing. */
+function setMode(m: Mode): void {
+  sctx.clearRect(0, 0, W, H)
+  sctx.drawImage(canvas, 0, 0)
+  fadeT = FADE
+  mode = m
+}
 
 // playback speed per clip: transitions and actions run faster than the raw 4 s so the pet feels snappy
 const RATE: Record<string, number> = {
@@ -152,45 +177,57 @@ const RATE: Record<string, number> = {
 let epoch = 0 // bumped by every new command: the old one stops and the new one takes over
 let cancelPlay: (() => void) | null = null
 let landing: State | null = null // pose the running transition ends in (applied instantly if it is cut short)
+let activeVideo: HTMLVideoElement | null = null
+
+function keyFor(name: string, v: HTMLVideoElement): number {
+  let k = clipKey.get(name)
+  if (k === undefined) {
+    bctx.drawImage(v, 0, 0, W, H)
+    k = sampleKey()
+    clipKey.set(name, k)
+  }
+  return k
+}
 
 /** Play a clip with live keying. Resolves false if the clip isn't generated yet. Can be cut short by a new command. */
 async function playClip(name: string): Promise<boolean> {
-  const url = clipUrl.get(name)
-  if (!url) return false
+  const v = clipVid.get(name)
+  if (!v) return false
   const my = epoch
-  video.loop = false
-  video.src = url
-  video.playbackRate = RATE[name] ?? 1.4
-  await waitFor(video, 'loadeddata')
+  v.loop = false
+  v.playbackRate = RATE[name] ?? 1.4
+  v.currentTime = 0
+  if (v.readyState < 2) await waitFor(v, 'loadeddata')
   if (my !== epoch) return true // cut while loading
-  bctx.drawImage(video, 0, 0, W, H)
-  const dKey = sampleKey()
   const ended = new Promise<void>((res) => {
-    video.addEventListener('ended', () => res(), { once: true })
+    v.addEventListener('ended', () => res(), { once: true })
     cancelPlay = () => {
-      video.pause()
+      v.pause()
       res()
     }
   })
-  mode = { kind: 'video', dKey }
-  await video.play()
+  activeVideo = v
+  await v.play()
+  if (my !== epoch) return true
+  setMode({ kind: 'video', v, dKey: keyFor(name, v) }) // switch only once frames are really flowing
   await ended
   cancelPlay = null
   return true
 }
 
 /** Start a clip that repeats until stopped (walk / run cycles). */
-async function startLoop(name: string, rate: number, my: number): Promise<boolean> {
-  const url = clipUrl.get(name)
-  if (!url) return false
-  video.loop = false
-  video.src = url
-  video.playbackRate = rate
-  await waitFor(video, 'loadeddata')
+async function startLoop(name: string, my: number): Promise<boolean> {
+  const v = clipVid.get(name)
+  if (!v) return false
+  v.loop = false
+  v.playbackRate = 0.6
+  v.currentTime = 0
+  if (v.readyState < 2) await waitFor(v, 'loadeddata')
   if (my !== epoch) return false
-  bctx.drawImage(video, 0, 0, W, H)
-  mode = { kind: 'video', dKey: sampleKey(), loopFrom: 0.8 } // the first moments are the stand pose: skip them on repeat
-  await video.play()
+  activeVideo = v
+  await v.play()
+  if (my !== epoch) return false
+  setMode({ kind: 'video', v, dKey: keyFor(name, v), loopFrom: 0.8 }) // skip the stand-pose lead-in on repeat
   return true
 }
 
@@ -203,7 +240,7 @@ async function goTo(target: State, my: number): Promise<void> {
     if (!ok) hop = 0.001 // no clip yet: hop to the new pose instead
     if (landing) current = landing
     landing = null
-    mode = { kind: 'idle' }
+    setMode({ kind: 'idle' })
   }
 }
 
@@ -212,7 +249,7 @@ async function action(name: string, my: number): Promise<void> {
   if (my !== epoch) return
   const ok = await playClip(name)
   if (!ok) hop = 0.001
-  mode = { kind: 'idle' }
+  if (my === epoch) setMode({ kind: 'idle' })
 }
 
 /** Latest command wins: cut whatever is playing (snapping to its end pose) and start the new one right away. */
@@ -224,14 +261,14 @@ function begin(job: (my: number) => Promise<void>): void {
   }
   cancelPlay?.()
   cancelPlay = null
-  video.pause()
+  activeVideo?.pause()
   if (walk) {
     const done = walk.done
     walk = null
     done()
   }
-  if (ball.state === 'carried') dropBall()
-  mode = { kind: 'idle' }
+  if (ball.state === 'carried' || ball.state === 'grab') dropBall()
+  setMode({ kind: 'idle' })
   void job(epoch).catch((e) => console.warn('[anim]', e))
 }
 
@@ -240,12 +277,15 @@ function begin(job: (my: number) => Promise<void>): void {
 // ======================================================================
 interface Walk {
   x: number
-  speed: number
+  speed: number // top ground speed (px/s); also the speed at which the gait clip plays at 1x
   track?: () => number // follow a moving target (the ball) instead of a fixed x
   until?: () => boolean // only count as arrived when this is true
   done: () => void
 }
 let walk: Walk | null = null
+let vel = 0 // current ground speed, signed
+let walkTx = 0 // smoothed chase target
+let faceS = 1 // animated facing (passes through 0 when turning around)
 
 async function moveTo(
   x: number,
@@ -255,15 +295,16 @@ async function moveTo(
 ): Promise<void> {
   await goTo('stand', my)
   if (my !== epoch) return
-  const clip = clipUrl.has(kind) ? kind : clipUrl.has('walk') ? 'walk' : ''
-  if (clip) await startLoop(clip, kind === 'run' ? 1.15 : 1, my)
+  const clip = clipVid.has(kind) ? kind : clipVid.has('walk') ? 'walk' : ''
+  if (clip) await startLoop(clip, my)
   if (my !== epoch) return
+  walkTx = opts.track ? opts.track() : x
   await new Promise<void>((res) => {
-    walk = { x: Math.max(HALF, Math.min(winW - HALF, x)), speed: kind === 'run' ? 340 : 150, ...opts, done: res }
+    walk = { x: Math.max(HALF, Math.min(winW - HALF, x)), speed: kind === 'run' ? 520 : 230, ...opts, done: res }
   })
   if (my !== epoch) return
-  video.pause()
-  mode = { kind: 'idle' }
+  activeVideo?.pause()
+  setMode({ kind: 'idle' })
 }
 
 async function resolveTarget(t: string): Promise<number> {
@@ -280,20 +321,72 @@ async function resolveTarget(t: string): Promise<number> {
 // ======================================================================
 //  The ball: drag + release to throw. The dog chases it, picks it up, brings it back.
 // ======================================================================
-const ball = { x: winW - 70, y: 0, vx: 0, vy: 0, rot: 0, state: 'rest' as 'rest' | 'drag' | 'fly' | 'carried' }
+const ball = {
+  x: winW - 70, y: 0, vx: 0, vy: 0, rot: 0,
+  state: 'rest' as 'rest' | 'drag' | 'fly' | 'grab' | 'carried',
+  gt: 0, gx: 0, gy: 0, onGrab: null as (() => void) | null
+}
+
+// where the dog's mouth is, in canvas pixels of the (unflipped) sprite; tracked from the pixels while a clip plays
+const mouth = { x: 0.78 * W, y: 0.285 * H }
+const SC = 270 / W // canvas px -> screen px
+
+/** World position (x along the strip, y up from the window bottom) of the dog's mouth right now. */
+function mouthWorld(): { x: number; y: number } {
+  const mx = face > 0 ? mouth.x : W - mouth.x
+  return { x: dogX - 135 + mx * SC, y: (H - mouth.y) * SC }
+}
+
+/** Find the nose tip: the right-most solid pixel in a thin band around the last known mouth height. */
+function trackMouth(d: Uint8ClampedArray): void {
+  const my = Math.round(mouth.y)
+  let bestX = -1
+  let bestY = my
+  for (let y = Math.max(0, my - 24); y <= Math.min(H - 1, my + 24); y += 2) {
+    for (let x = W - 1; x > bestX + 2; x -= 3) {
+      if (d[(y * W + x) * 4 + 3] > 128) {
+        bestX = x
+        bestY = y
+        break
+      }
+    }
+  }
+  if (bestX > 0) {
+    mouth.x += (bestX - mouth.x) * 0.5
+    mouth.y += (bestY - mouth.y) * 0.3
+  }
+}
 
 function dropBall(): void {
-  ball.x = dogX + face * MOUTH_DX
-  ball.y = MOUTH_H
+  const m = mouthWorld()
+  ball.x = m.x
+  ball.y = Math.max(0, m.y - FLOOR - 19)
   ball.vx = face * 90
   ball.vy = 0
   ball.state = 'fly'
 }
 
 function stepBall(dt: number): void {
-  if (ball.state === 'carried') {
-    ball.x = dogX + face * MOUTH_DX
-    ball.y = MOUTH_H + (walk ? Math.abs(Math.sin(performance.now() / 90)) * 8 : 0)
+  let scale = 1
+  if (ball.state === 'carried' || ball.state === 'grab') {
+    const m = mouthWorld()
+    const tx = m.x - face * 9 // tucked just inside the mouth
+    const ty = m.y - 8 - FLOOR - 19
+    if (ball.state === 'grab') {
+      ball.gt = Math.min(1, ball.gt + dt / 0.3)
+      const e = 1 - (1 - ball.gt) ** 2
+      ball.x = ball.gx + (tx - ball.gx) * e
+      ball.y = ball.gy + (ty - ball.gy) * e + Math.sin(Math.PI * ball.gt) * 60 // it hops up into the mouth
+      if (ball.gt >= 1) {
+        ball.state = 'carried'
+        ball.onGrab?.()
+        ball.onGrab = null
+      }
+    } else {
+      ball.x = tx
+      ball.y = ty
+    }
+    scale = 0.82
   } else if (ball.state === 'fly') {
     if (!(ball.y === 0 && ball.vy === 0)) {
       ball.vy -= 2400 * dt
@@ -315,7 +408,7 @@ function stepBall(dt: number): void {
       ball.state = 'rest'
     }
   }
-  ballEl.style.transform = `translate(${ball.x}px, ${-(FLOOR + ball.y)}px) rotate(${ball.rot}deg)`
+  ballEl.style.transform = `translate(${ball.x}px, ${-(FLOOR + ball.y)}px) rotate(${ball.rot}deg) scale(${scale})`
 }
 
 const sleep = (ms: number, my: number): Promise<void> =>
@@ -329,10 +422,15 @@ async function fetchFlow(my: number, homeX: number): Promise<void> {
   // chase the ball (it may still be flying), then wait until it has stopped
   await moveTo(0, 'run', my, { track: () => ball.x, until: () => ball.state === 'rest' })
   if (my !== epoch) return
-  ball.state = 'carried'
-  hop = 0.001
+  // pick it up: the ball hops from the floor into the mouth
+  ball.gx = ball.x
+  ball.gy = ball.y
+  ball.gt = 0
+  ball.state = 'grab'
   say('Got it!', 1800)
-  await sleep(350, my)
+  await new Promise<void>((res) => (ball.onGrab = res))
+  if (my !== epoch) return
+  await sleep(150, my)
   if (my !== epoch) return
   await moveTo(homeX, 'run', my)
   if (my !== epoch) return
@@ -349,7 +447,7 @@ function throwBall(vx: number, vy: number, homeX: number): void {
 
 /** "Fetch": throw the ball from where it lies, away from the nearest screen edge. */
 function autoThrow(): void {
-  if (ball.state === 'carried') dropBall()
+  if (ball.state === 'carried' || ball.state === 'grab') dropBall()
   const dir = ball.x > winW / 2 ? -1 : 1
   const home = ball.x
   ball.y = Math.max(ball.y, 20)
@@ -360,7 +458,7 @@ function autoThrow(): void {
 let dragging = false
 let samples: { t: number; x: number; y: number }[] = []
 ballEl.addEventListener('pointerdown', (e) => {
-  if (ball.state === 'carried') return
+  if (ball.state === 'carried' || ball.state === 'grab') return
   ballEl.setPointerCapture(e.pointerId)
   dragging = true
   ball.state = 'drag'
@@ -590,7 +688,7 @@ document.addEventListener('mousemove', (e) => {
     if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
       let x = Math.floor(((e.clientX - r.left) / r.width) * W)
       const y = Math.floor(((e.clientY - r.top) / r.height) * H)
-      if (face < 0) x = W - 1 - x
+      if (faceS < 0) x = W - 1 - x
       hit = ctx.getImageData(Math.max(0, Math.min(W - 1, x)), y, 1, 1).data[3] > 30
     }
   }
@@ -623,22 +721,31 @@ function frame(now: number): void {
   arriveT += dt
   const t = now / 1000
 
-  // walking: slide along the floor toward the target; the walk/run clip supplies the legs
+  // walking: real acceleration, slowing down on arrival, gait clip speed tied to ground speed
   if (walk) {
     const w = walk
-    const tx = w.track ? w.track() : w.x
-    if (w.track && Math.abs(tx - dogX) > 15) face = tx > dogX ? 1 : -1
-    const aim = w.track ? Math.max(HALF, Math.min(winW - HALF, tx - face * MOUTH_DX)) : tx
+    const raw = w.track ? w.track() : w.x
+    walkTx += (raw - walkTx) * Math.min(1, dt * 14) // smooth the chase target so it never jerks
+    if (w.track ? Math.abs(raw - dogX) > 22 : Math.abs(w.x - dogX) > 2) face = (w.track ? raw : w.x) > dogX ? 1 : -1
+    const m = mouthWorld()
+    const aim = w.track ? Math.max(HALF, Math.min(winW - HALF, walkTx - (m.x - dogX) - face * 4)) : walkTx
     const diff = aim - dogX
-    if (Math.abs(diff) > 6) {
-      const d = Math.sign(diff)
-      dogX += d * Math.min(w.speed * dt, Math.abs(diff))
-      if (!w.track) face = d
-    } else if (!w.until || w.until()) {
+    const dist = Math.abs(diff)
+    const accel = w.speed * 2.4
+    const vWant = Math.sign(diff) * Math.min(w.speed, Math.sqrt(2 * accel * 0.65 * dist))
+    const dv = vWant - vel
+    vel += Math.max(-accel * dt, Math.min(accel * dt, dv))
+    dogX += vel * dt
+    if (activeVideo) activeVideo.playbackRate = Math.max(0.4, Math.min(2, Math.abs(vel) / w.speed + 0.15))
+    if (dist < 5 && Math.abs(vel) < 25 && (!w.until || w.until())) {
       walk = null
+      vel = 0
       w.done()
     }
+  } else {
+    vel = 0
   }
+  faceS += (face - faceS) * Math.min(1, dt * 16)
   dogEl.style.transform = `translateX(${dogX - HALF}px)`
   stepBall(dt)
 
@@ -646,11 +753,12 @@ function frame(now: number): void {
   let fx = ''
 
   if (mode.kind === 'video') {
-    if (mode.loopFrom !== undefined && video.duration && video.currentTime >= video.duration - 0.1) {
-      video.currentTime = mode.loopFrom
-    }
-    bctx.drawImage(video, 0, 0, W, H)
-    ctx.putImageData(keyBuffer(mode.dKey), 0, 0)
+    const v = mode.v
+    if (mode.loopFrom !== undefined && v.duration && v.currentTime >= v.duration - 0.1) v.currentTime = mode.loopFrom
+    bctx.drawImage(v, 0, 0, W, H)
+    const id = keyBuffer(mode.dKey)
+    ctx.putImageData(id, 0, 0)
+    trackMouth(id.data)
   } else {
     const frames = idle[current]
     if (frames && frames.length > 1) {
@@ -671,6 +779,14 @@ function frame(now: number): void {
     }
   }
 
+  // crossfade from the previous pose/clip so changes never snap
+  if (fadeT > 0) {
+    ctx.globalAlpha = Math.min(1, fadeT / FADE)
+    ctx.drawImage(snap, 0, 0)
+    ctx.globalAlpha = 1
+    fadeT -= dt
+  }
+
   // procedural extras: drop-in arrival, and a hop standing in for any clip that hasn't generated yet
   let y = 0
   if (arriveT < 0.9) {
@@ -682,7 +798,7 @@ function frame(now: number): void {
     if (hop > 0.7) hop = 0
     else y -= Math.sin((hop / 0.7) * Math.PI) * 70
   }
-  canvas.style.transform = `translateY(${y}px) scaleX(${face})${fx}`
+  canvas.style.transform = `translateY(${y}px) scaleX(${faceS})${fx}`
   requestAnimationFrame(frame)
 }
 
@@ -696,6 +812,11 @@ void (async () => {
 
   // wait for the standing still so the very first frame is already the pet
   await loadStill('stand')
+  const anchor = await window.wf.anchor()
+  if (anchor) {
+    mouth.x = anchor.x * W
+    mouth.y = anchor.y * H
+  }
   for (const a of await window.wf.assets()) await registerAsset(a)
   requestAnimationFrame(frame)
   window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me, or hold me to talk.`, 4500), 1000)

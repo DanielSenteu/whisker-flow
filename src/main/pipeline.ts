@@ -1,11 +1,22 @@
 import { app, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { generateClip, generateStill, poseFromStandPrompt, standPrompt } from './gemini'
+import { generateClip, generateStill, locateNose, poseFromStandPrompt, standPrompt } from './gemini'
 
 export const petDir = (): string => join(app.getPath('userData'), 'pet')
 const stillPath = (n: string): string => join(petDir(), 'stills', `${n}.jpg`)
 const clipPath = (n: string): string => join(petDir(), 'clips', `${n}.mp4`)
+
+const anchorPath = (): string => join(petDir(), 'anchor.json')
+
+/** Nose position (fractions of the frame) in the standing pose, or null if not found yet. */
+export function readAnchor(): { x: number; y: number } | null {
+  try {
+    return existsSync(anchorPath()) ? JSON.parse(readFileSync(anchorPath(), 'utf-8')) : null
+  } catch {
+    return null
+  }
+}
 
 export function resetPetFiles(): void {
   rmSync(petDir(), { recursive: true, force: true })
@@ -156,6 +167,16 @@ export async function runPipeline(species: string, getWin: () => BrowserWindow |
   try {
     const photoUrl = `data:image/jpeg;base64,${readFileSync(join(petDir(), 'photo.jpg')).toString('base64')}`
     const standUrl = `data:image/jpeg;base64,${readFileSync(stillPath('stand')).toString('base64')}`
+
+    if (!readAnchor()) {
+      try {
+        const nose = await locateNose(readFileSync(stillPath('stand')).toString('base64'))
+        save(anchorPath(), Buffer.from(JSON.stringify(nose)))
+        send('pet:asset-ready', 'anchor:nose')
+      } catch (e) {
+        console.warn('[pipeline] nose:', (e as Error).message)
+      }
+    }
 
     const poses: [string, string][] = [
       ['sit', 'but sitting on its haunches, front legs straight, head up, happy and alert'],

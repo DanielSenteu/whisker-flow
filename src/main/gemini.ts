@@ -238,3 +238,32 @@ export async function generateClip(imageB64s: string[], prompt: string, seconds:
   if (!video) throw new Error('Omni returned no video')
   return Buffer.from(video.data as string, 'base64')
 }
+
+/** Where is the tip of the pet's nose in the standing keyframe? Fractions of width/height (the ball is carried here). */
+export async function locateNose(standJpgBase64: string): Promise<{ x: number; y: number }> {
+  const body = await post(
+    textModel(),
+    {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: standJpgBase64 } },
+            {
+              text:
+                "Locate the very tip of this animal's nose in the image. Return JSON {\"x\":number,\"y\":number} as fractions of the image width and height (0 to 1)."
+            }
+          ]
+        }
+      ],
+      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
+    },
+    20000
+  )
+  const text: string = body?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+  const j = JSON.parse(text)
+  const x = Number(j.x)
+  const y = Number(j.y)
+  if (!(x > 0 && x < 1 && y > 0 && y < 1)) throw new Error('Bad nose location')
+  return { x, y }
+}

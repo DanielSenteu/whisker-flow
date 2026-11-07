@@ -15,6 +15,7 @@ const api = {
   createBase: (photo: string, species: string): Promise<{ ok: true; stand: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke('pet:createBase', { photo, species }),
   assets: (): Promise<string[]> => ipcRenderer.invoke('pet:assets'),
+  anchor: (): Promise<{ x: number; y: number } | null> => ipcRenderer.invoke('pet:anchor'),
   file: (kind: 'still' | 'clip', name: string): Promise<Uint8Array | null> =>
     ipcRenderer.invoke('pet:file', { kind, name }),
   onAssetReady: (cb: (asset: string) => void): void => {
