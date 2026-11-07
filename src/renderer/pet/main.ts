@@ -133,46 +133,73 @@ const video = document.createElement('video')
 video.muted = true
 video.playsInline = true
 
-/** Play a clip to the end with live keying. Resolves false if the clip isn't generated yet. */
+// playback speed per clip: transitions and actions run faster than the raw 4 s so the pet feels snappy
+const RATE: Record<string, number> = {
+  stand2sit: 1.6, sit2stand: 1.6, sit2lie: 1.5, lie2sit: 1.5,
+  bark: 1.4, jump: 1.3, dance: 1.25
+}
+
+let epoch = 0 // bumped by every new command: the old one stops and the new one takes over
+let cancelPlay: (() => void) | null = null
+let landing: State | null = null // pose the running transition ends in (applied instantly if it is cut short)
+
+/** Play a clip with live keying. Resolves false if the clip isn't generated yet. Can be cut short by a new command. */
 async function playClip(name: string): Promise<boolean> {
   const url = clipUrl.get(name)
   if (!url) return false
+  const my = epoch
   video.src = url
+  video.playbackRate = RATE[name] ?? 1.4
   await waitFor(video, 'loadeddata')
+  if (my !== epoch) return true // cut while loading
   bctx.drawImage(video, 0, 0, W, H)
   const dKey = sampleKey()
-  const ended = waitFor(video, 'ended')
+  const ended = new Promise<void>((res) => {
+    video.addEventListener('ended', () => res(), { once: true })
+    cancelPlay = () => {
+      video.pause()
+      res()
+    }
+  })
   mode = { kind: 'video', v: video, dKey }
   await video.play()
   await ended
+  cancelPlay = null
   return true
 }
 
-async function goTo(target: State): Promise<void> {
-  while (current !== target) {
+async function goTo(target: State, my: number): Promise<void> {
+  while (current !== target && my === epoch) {
     const i = STATES.indexOf(current)
     const next = STATES[i + (STATES.indexOf(target) > i ? 1 : -1)]
+    landing = next
     const ok = await playClip(`${current}2${next}`)
     if (!ok) hop = 0.001 // no clip yet: hop to the new pose instead
-    current = next
+    if (landing) current = landing
+    landing = null
     mode = { kind: 'idle' }
   }
 }
 
-async function action(name: string): Promise<void> {
-  await goTo('stand')
+async function action(name: string, my: number): Promise<void> {
+  await goTo('stand', my)
+  if (my !== epoch) return
   const ok = await playClip(name)
   if (!ok) hop = 0.001
   mode = { kind: 'idle' }
 }
 
-// commands run one at a time; a pile-up of taps is trimmed to the latest two
-let chain: Promise<void> = Promise.resolve()
-let pending = 0
-function enqueue(job: () => Promise<void>): void {
-  if (pending >= 2) return
-  pending++
-  chain = chain.then(job).catch((e) => console.warn('[anim]', e)).finally(() => pending--)
+/** Latest command wins: cut whatever is playing (snapping to its end pose) and start the new one right away. */
+function begin(job: (my: number) => Promise<void>): void {
+  epoch++
+  if (landing) {
+    current = landing
+    landing = null
+  }
+  cancelPlay?.()
+  cancelPlay = null
+  mode = { kind: 'idle' }
+  void job(epoch).catch((e) => console.warn('[anim]', e))
 }
 
 // ======================================================================
@@ -215,27 +242,27 @@ function run(cmd: string): void {
   switch (cmd) {
     case 'sit':
       say('Sitting pretty!')
-      enqueue(() => goTo('sit'))
+      begin((my) => goTo('sit', my))
       break
     case 'sleep':
       say('Okay… nap time. Zzz.')
-      enqueue(() => goTo('lie'))
+      begin((my) => goTo('lie', my))
       break
     case 'jump':
       say('Wheee!')
-      enqueue(() => action('jump'))
+      begin((my) => action('jump', my))
       break
     case 'dance':
       say('Watch my moves!')
-      enqueue(() => action('dance'))
+      begin((my) => action('dance', my))
       break
     case 'speak':
       say(cat ? 'Meow meow!' : 'Woof woof!')
-      enqueue(() => action('bark'))
+      begin((my) => action('bark', my))
       break
     case 'good_boy':
       say(cat ? 'Purr. I know.' : 'Who, me? Best day ever!')
-      enqueue(() => action('bark'))
+      begin((my) => action('bark', my))
       break
   }
 }
@@ -418,6 +445,19 @@ void (async () => {
   for (const a of await window.wf.assets()) await registerAsset(a)
   requestAnimationFrame(frame)
   window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me, or hold me to talk.`, 4500), 1000)
+
+  // pre-generate the pet's stock lines so they play instantly (cached on disk by the main process)
+  void (async () => {
+    const cat = profile.species === 'cat'
+    for (const line of [
+      `Hey! I'm ${profile.name}. How may I help you?`,
+      `Hi, I'm ${profile.name}! Tap me, or hold me to talk.`,
+      'Sitting pretty!', 'Wheee!', 'Watch my moves!', 'Okay… nap time. Zzz.',
+      cat ? 'Meow meow!' : 'Woof woof!',
+      cat ? 'Purr. I know.' : 'Who, me? Best day ever!',
+      "Hmm, I didn't catch that. Try again?"
+    ]) await window.wf.speak(line).catch(() => null)
+  })()
 
   window.wf.onAssetReady((a) => void registerAsset(a))
   window.wf.onProgress((pr) => {
