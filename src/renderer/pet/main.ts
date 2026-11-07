@@ -697,6 +697,10 @@ function handleIntent(i: Intent): void {
     case 'play_ball':
       run('fetch')
       break
+    case 'team_task':
+      say(i.ack, 3500)
+      startPack(i.goal)
+      break
     case 'chat':
       say(i.reply, 5000)
       break
@@ -761,16 +765,157 @@ canvas.addEventListener('pointerup', () => {
     return
   }
   window.clearTimeout(holdTimer)
-  if (taskRunning) {
+  if (taskRunning || packRunning) {
     taskRunning = false
+    packRunning = false
     window.wf.stopTask()
-    say('Okay, stopping!', 2500)
+    window.wf.stopPack()
+    say('Okay, pups, stand down!', 2500)
     return
   }
   say(`Hey! I'm ${profile.name}. How may I help you?`, 4500)
   cmds.classList.add('show')
   window.clearTimeout(cmdTimer)
   cmdTimer = window.setTimeout(() => cmds.classList.remove('show'), 12000)
+})
+
+// ======================================================================
+//  The pack: small helper pups that appear beside the lead dog and work in parallel
+// ======================================================================
+const packEl = document.getElementById('pack') as HTMLDivElement
+const BADGE: Record<string, string> = { scout: '🔍', quill: '✍️', dj: '🎵', operator: '🔧' }
+const HUE: Record<string, number> = { scout: 150, quill: 255, dj: 320, operator: 45 }
+
+interface Pup {
+  id: string
+  role: string
+  el: HTMLDivElement
+  canvas: HTMLCanvasElement
+  c: CanvasRenderingContext2D
+  status: HTMLDivElement
+  logEl: HTMLDivElement
+  x: number
+  spawnT: number
+  phase: number
+  state: 'waiting' | 'working' | 'done' | 'error'
+  hopT: number
+  index: number
+}
+const pups = new Map<string, Pup>()
+let packRunning = false
+let packFadeTimer = 0
+
+function clearPups(): void {
+  window.clearTimeout(packFadeTimer)
+  pups.forEach((p) => p.el.remove())
+  pups.clear()
+}
+
+function spawnPup(info: { id: string; name: string; role: string }, index: number): void {
+  if (pups.has(info.id)) return // never spawn the same pup twice
+  const el = document.createElement('div')
+  el.className = 'pup waiting'
+  el.innerHTML = `<div class="log"></div><div class="info"><span class="tag">${BADGE[info.role] ?? '🐾'} ${info.name}</span><br/><span class="status">Waiting…</span></div><canvas width="120" height="213"></canvas>`
+  const canvasEl = el.querySelector('canvas') as HTMLCanvasElement
+  canvasEl.style.filter += ` hue-rotate(${HUE[info.role] ?? 0}deg)`
+  const logEl = el.querySelector('.log') as HTMLDivElement
+  canvasEl.addEventListener('pointerup', (e) => {
+    e.stopPropagation()
+    pups.forEach((p) => p !== pup && p.logEl.classList.remove('show'))
+    logEl.classList.toggle('show')
+  })
+  packEl.appendChild(el)
+  const pup: Pup = {
+    id: info.id, role: info.role, el, canvas: canvasEl, c: canvasEl.getContext('2d')!,
+    status: el.querySelector('.status') as HTMLDivElement, logEl,
+    x: dogX, spawnT: 0, phase: Math.random() * 6, state: 'waiting', hopT: 0, index
+  }
+  pup.canvas.style.filter = `drop-shadow(0 5px 6px rgba(0,0,0,.3)) hue-rotate(${HUE[info.role] ?? 0}deg)`
+  pups.set(info.id, pup)
+}
+
+function updatePups(dt: number, t: number): void {
+  const frames = idle.stand
+  const bmp = frames && frames.length ? frames[idleI % frames.length] : stills.stand
+  pups.forEach((p) => {
+    p.spawnT = Math.min(1, p.spawnT + dt / 0.7)
+    // stand to the side of the lead dog with more room, facing it
+    const side = dogX > 560 ? -1 : 1
+    const tx = Math.max(70, Math.min(winW - 70, dogX + side * (230 + p.index * 185)))
+    p.x += (tx - p.x) * Math.min(1, dt * 3)
+    const k = p.spawnT
+    const arc = k < 1 ? Math.sin(k * Math.PI) * 150 : 0
+    const scale = 0.3 + 0.7 * Math.min(1, k * 1.4)
+    let bob = 0
+    if (k >= 1) {
+      if (p.state === 'working') bob = Math.abs(Math.sin(t * 6 + p.phase)) * 7
+      if (p.hopT > 0) {
+        p.hopT += dt
+        bob += Math.sin((p.hopT / 0.5) * Math.PI) * 40
+        if (p.hopT > 0.5) p.hopT = 0
+      }
+    }
+    p.el.style.transform = `translate(${p.x - 55}px, ${-(FLOOR - 8) - arc - bob}px)`
+    p.canvas.style.transform = `scale(${-side}, 1) scale(${scale})`
+    p.canvas.style.transformOrigin = '50% 100%'
+    if (bmp) {
+      p.c.clearRect(0, 0, 120, 213)
+      p.c.drawImage(bmp, 0, 0, 120, 213)
+    }
+  })
+}
+
+function setPupState(p: Pup, state: Pup['state'], line?: string): void {
+  p.state = state
+  p.el.classList.remove('waiting', 'working', 'done', 'error')
+  p.el.classList.add(state)
+  if (line) {
+    p.status.textContent = line.length > 70 ? line.slice(0, 68) + '…' : line
+    const row = document.createElement('div')
+    row.textContent = line
+    p.logEl.appendChild(row)
+    p.logEl.scrollTop = p.logEl.scrollHeight
+  }
+}
+
+function startPack(goal: string): void {
+  packRunning = true
+  clearPups()
+  void window.wf.runPack(goal)
+}
+
+window.wf.onPack((e) => {
+  if (e.type === 'plan') {
+    say(e.intro, 6000)
+    ;(e.pups as { id: string; name: string; role: string }[]).forEach((info, i) =>
+      window.setTimeout(() => spawnPup(info, i), 500 + i * 380)
+    )
+  } else if (e.type === 'pup') {
+    const p = pups.get(e.id)
+    if (!p) {
+      // the pup is still popping out: retry shortly
+      window.setTimeout(() => {
+        const q = pups.get(e.id)
+        if (q) setPupState(q, e.status, e.status === 'done' ? e.result || e.line : e.line)
+      }, 1600)
+      return
+    }
+    setPupState(p, e.status, e.status === 'done' || e.status === 'error' ? e.result || e.line : e.line)
+    if (e.status === 'done') p.hopT = 0.001
+  } else if (e.type === 'final') {
+    packRunning = false
+    begin((my) => action('jump', my))
+    say(e.text, Math.max(7000, e.text.length * 90))
+    window.clearTimeout(packFadeTimer)
+    packFadeTimer = window.setTimeout(() => {
+      pups.forEach((p) => p.el.classList.add('gone'))
+      window.setTimeout(clearPups, 700)
+    }, 45000)
+  } else if (e.type === 'error') {
+    packRunning = false
+    say("Oh no, the pack got tangled up. Want to try again?", 5000)
+    console.warn('[pack]', e.message)
+  }
 })
 
 // ---------- click-through: only the pet, the ball and the buttons catch the mouse ----------
@@ -792,7 +937,7 @@ document.addEventListener('mousemove', (e) => {
   }
   if (!hit) {
     const el = document.elementFromPoint(e.clientX, e.clientY)
-    if (el && el.closest('#cmds.show')) hit = true
+    if (el && (el.closest('#cmds.show') || el.closest('.pup canvas') || el.closest('.pup .log.show'))) hit = true
   }
   if (hit !== solid) {
     solid = hit
@@ -858,6 +1003,7 @@ function frame(now: number): void {
   faceS += (face - faceS) * Math.min(1, dt * 16)
   dogEl.style.transform = `translateX(${dogX - HALF}px)`
   stepBall(dt)
+  updatePups(dt, t)
 
   ctx.clearRect(0, 0, W, H)
   let fx = ''

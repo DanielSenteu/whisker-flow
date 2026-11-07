@@ -32,6 +32,27 @@
       #learn { position: absolute; right: 8px; top: 74px; font-size: 11px; font-weight: 700; color: #fff;
         background: rgba(40,20,60,.78); padding: 5px 10px; border-radius: 999px; opacity: 0; transition: opacity .4s; }
       #learn.show { opacity: 1; }
+      /* the pack: small helper pups that appear next to the lead dog */
+      #pack { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; pointer-events: none; }
+      .pup { position: absolute; left: 0; bottom: 0; width: 110px; height: 196px; will-change: transform; transition: opacity .6s; }
+      .pup.gone { opacity: 0; }
+      .pup canvas { position: absolute; left: 0; bottom: 0; width: 110px; height: 196px; pointer-events: auto; cursor: pointer;
+        filter: drop-shadow(0 5px 6px rgba(0,0,0,.3)); }
+      .pup .info { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); width: 180px; text-align: center; pointer-events: none; }
+      .pup .tag { display: inline-block; background: rgba(40,20,60,.88); color: #fff; font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 99px; }
+      .pup .status { margin-top: 4px; font-size: 11.5px; font-weight: 600; color: #2a1b3d; background: rgba(255,255,255,.95); padding: 4px 9px; border-radius: 10px;
+        box-shadow: 0 3px 10px rgba(0,0,0,.25); display: inline-block; max-width: 176px; }
+      .pup.working .status::before { content: '● '; color: #ff8fb1; animation: blink 1s infinite; }
+      .pup.waiting .status { color: #7c6d8c; }
+      .pup.done .status { background: #dcfce7; }
+      .pup.done .status::before { content: '✓ '; color: #15803d; font-weight: 900; }
+      .pup.error .status { background: #fee2e2; }
+      .pup.error .status::before { content: '✗ '; color: #b91c1c; font-weight: 900; }
+      @keyframes blink { 50% { opacity: .25; } }
+      .pup .log { position: absolute; left: 50%; bottom: 226px; transform: translateX(-50%); width: 240px; max-height: 190px; overflow: auto; display: none;
+        background: rgba(30,16,48,.94); color: #f6f1ff; font-size: 11.5px; line-height: 1.45; padding: 9px 11px; border-radius: 12px; text-align: left; pointer-events: auto; }
+      .pup .log.show { display: block; }
+      .pup .log div { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
       /* the toy: drag it and let go to throw */
       #ball { position: absolute; left: 0; bottom: 0; width: 38px; height: 38px; margin-left: -19px; font-size: 34px; line-height: 38px;
         text-align: center; cursor: grab; will-change: transform; filter: drop-shadow(0 4px 4px rgba(0,0,0,.35)); }
@@ -54,6 +75,7 @@
         <button data-cmd="sleep">Sleep</button>
       </div>
     </div>
+    <div id="pack"></div>
     <div id="ball">🎾</div>
     <script type="module" src="./main.ts"></script>
   </body>

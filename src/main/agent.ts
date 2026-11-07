@@ -20,7 +20,7 @@ let browser: Browser | null = null
 let page: Page | null = null
 let cancelled = false
 
-async function ensurePage(): Promise<Page> {
+async function ensureBrowser(): Promise<Browser> {
   if (!browser || !browser.connected) {
     browser = await puppeteer.launch({
       executablePath: CHROME,
@@ -31,11 +31,34 @@ async function ensurePage(): Promise<Page> {
     })
     page = null
   }
+  return browser
+}
+
+async function ensurePage(): Promise<Page> {
+  const b = await ensureBrowser()
   if (!page || page.isClosed()) {
-    const pages = await browser.pages()
-    page = pages[0] ?? (await browser.newPage())
+    const pages = await b.pages()
+    page = pages[0] ?? (await b.newPage())
   }
   return page
+}
+
+/** A brand-new Chrome window for one pup, tiled so several pups' windows are visible side by side. */
+export async function newPupPage(slot: number): Promise<Page> {
+  const b = await ensureBrowser()
+  const ctx = await b.createBrowserContext()
+  const p = await ctx.newPage()
+  try {
+    const cdp = await p.createCDPSession()
+    const { windowId } = await cdp.send('Browser.getWindowForTarget')
+    await cdp.send('Browser.setWindowBounds', {
+      windowId,
+      bounds: { left: 30 + slot * 440, top: 50 + slot * 30, width: 780, height: 760, windowState: 'normal' }
+    })
+  } catch {
+    /* positioning is cosmetic */
+  }
+  return p
 }
 
 export async function closeBrowser(): Promise<void> {
@@ -60,7 +83,7 @@ interface Observation {
   elements: string[]
 }
 
-async function observe(p: Page): Promise<Observation> {
+export async function observe(p: Page): Promise<Observation> {
   const o = await p.evaluate(() => {
     document.querySelectorAll('[data-wf]').forEach((e) => e.removeAttribute('data-wf'))
     document.querySelectorAll('a[target]').forEach((a) => a.removeAttribute('target')) // keep everything in one tab
@@ -99,7 +122,7 @@ async function settle(p: Page): Promise<void> {
 
 // ---------------------------------------------------------------- the tools the model can call
 const narration = { type: 'STRING', description: 'What you are doing, said out loud by the pet: first person, max 8 words, cheerful, plain words only.' }
-const DECLARATIONS = [
+export const DECLARATIONS = [
   {
     name: 'navigate',
     description: 'Open a URL in the browser.',
@@ -130,7 +153,10 @@ const DECLARATIONS = [
     description: 'The task is done (or as done as it can be). Give the answer the pet will say out loud.',
     parameters: {
       type: 'OBJECT',
-      properties: { answer: { type: 'STRING', description: 'Spoken answer, under 30 words, plain words only.' } },
+      properties: {
+        answer: { type: 'STRING', description: 'Spoken answer, under 30 words, plain words only.' },
+        notes: { type: 'STRING', description: 'Optional: the detailed findings (names, ratings, prices, addresses, links) for a teammate to use. Up to 200 words.' }
+      },
       required: ['answer']
     }
   },
@@ -141,7 +167,7 @@ const DECLARATIONS = [
   }
 ]
 
-function systemPrompt(petName: string, species: string): string {
+export function systemPrompt(petName: string, species: string): string {
   return (
     `You are ${petName}, a loving ${species} sidekick who drives a web browser for your human. ` +
     'You see the page as a text list of numbered clickable elements plus the visible text. Call exactly ONE tool per turn. ' +
@@ -157,7 +183,7 @@ function systemPrompt(petName: string, species: string): string {
 
 const model = (): string => process.env.GEMINI_AGENT_MODEL || process.env.GEMINI_MODEL || 'gemini-3-flash-preview'
 
-async function think(contents: unknown[], system: string): Promise<any> {
+export async function think(contents: unknown[], system: string, declarations: unknown[] = DECLARATIONS): Promise<any> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY is not set')
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model()}:generateContent`, {
@@ -167,7 +193,7 @@ async function think(contents: unknown[], system: string): Promise<any> {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents,
-      tools: [{ functionDeclarations: DECLARATIONS }],
+      tools: [{ functionDeclarations: declarations }],
       toolConfig: { functionCallingConfig: { mode: 'ANY' } },
       generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
     })
@@ -176,8 +202,8 @@ async function think(contents: unknown[], system: string): Promise<any> {
   return res.json()
 }
 
-async function act(name: string, a: any): Promise<Record<string, unknown>> {
-  let p = await ensurePage()
+export async function act(name: string, a: any, pg?: Page): Promise<Record<string, unknown>> {
+  let p = pg ?? (await ensurePage())
   try {
     switch (name) {
       case 'navigate': {
@@ -213,8 +239,8 @@ async function act(name: string, a: any): Promise<Record<string, unknown>> {
         break
     }
     await settle(p)
-    // a click can open a new tab: follow it
-    const pages = await browser!.pages()
+    // a click can open a new tab: follow it (only for the single-agent window; pups keep their own page)
+    const pages = pg ? [p] : await browser!.pages()
     if (pages[pages.length - 1] !== p) {
       p = pages[pages.length - 1]
       page = p
@@ -228,7 +254,7 @@ async function act(name: string, a: any): Promise<Record<string, unknown>> {
 }
 
 /** Keep the history small: older page observations are replaced by a one-line note. */
-function trim(contents: any[]): void {
+export function trim(contents: any[]): void {
   const resp = contents.filter((c) => c.role === 'user' && c.parts?.[0]?.functionResponse)
   for (const c of resp.slice(0, -2)) {
     const r = c.parts[0].functionResponse.response

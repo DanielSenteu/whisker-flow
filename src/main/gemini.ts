@@ -15,6 +15,7 @@ export type Intent =
   | { kind: 'look_at_screen'; heard: string }
   | { kind: 'move_to'; target: MoveTarget; heard: string }
   | { kind: 'play_ball'; heard: string }
+  | { kind: 'team_task'; goal: string; ack: string; heard: string }
   | { kind: 'chat'; reply: string; heard: string }
   | { kind: 'error'; message: string }
 
@@ -80,6 +81,20 @@ const DECLARATIONS = [
         heard: heardProp
       },
       required: ['target', 'heard']
+    }
+  },
+  {
+    name: 'team_task',
+    description:
+      'The user wants real WORK done that involves MORE THAN ONE kind of job (for example music AND research, or research THEN writing a plan/summary/document), or asks for music or an app to be controlled on the Mac (play music, pause, open an app). Hand it to the pack of helper pups. Rewrite the request as one clear goal.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        goal: { type: 'STRING', description: 'The complete request as one clear instruction.' },
+        ack: { type: 'STRING', description: 'A short, cheerful in-character line (max 10 words) said before starting.' },
+        heard: heardProp
+      },
+      required: ['goal', 'ack', 'heard']
     }
   },
   {
@@ -149,6 +164,8 @@ export async function interpretAudio(
           : { kind: 'error', message: 'Unknown target' }
       case 'play_ball':
         return { kind: 'play_ball', heard: String(a.heard ?? '') }
+      case 'team_task':
+        return { kind: 'team_task', goal: String(a.goal), ack: String(a.ack ?? 'Calling the pack!'), heard: String(a.heard ?? '') }
       case 'look_at_screen':
         return { kind: 'look_at_screen', heard: String(a.heard ?? '') }
       default:

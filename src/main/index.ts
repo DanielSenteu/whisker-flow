@@ -5,6 +5,7 @@ import { loadEnv } from './env'
 import { describeScreen, interpretAudio } from './gemini'
 import { speak } from './eleven'
 import { closeBrowser, runTask, stopTask } from './agent'
+import { runPack, stopPack } from './pack'
 import { activate, archiveCurrent, createBase, demoBase, hasBase, listAssets, listSaved, petDir, readAnchor, readAsset, runPipeline } from './pipeline'
 import type { PetProfile } from '../shared/types'
 
@@ -158,6 +159,22 @@ app.whenReady().then(() => {
     return true
   })
   ipcMain.on('agent:stop', () => stopTask())
+
+  // ---- the pack: the lead dog plans, helper pups work in parallel ----
+  const packSend = (payload: unknown): void => {
+    if (petWin && !petWin.isDestroyed()) petWin.webContents.send('pack:event', payload)
+  }
+  ipcMain.handle('pack:run', (_e, goal: string) => {
+    const p = loadProfile()
+    void runPack(String(goal).slice(0, 600), p?.name ?? 'Buddy', p?.species ?? 'dog', {
+      plan: (intro, pups) => packSend({ type: 'plan', intro, pups }),
+      pup: (id, u) => packSend({ type: 'pup', id, ...u }),
+      final: (text) => packSend({ type: 'final', text }),
+      error: (message) => packSend({ type: 'error', message })
+    })
+    return true
+  })
+  ipcMain.on('pack:stop', () => stopPack())
 
   ipcMain.handle('pets:demo', () => {
     const r = demoBase(loadProfile)
