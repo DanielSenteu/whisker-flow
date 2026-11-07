@@ -817,11 +817,19 @@ window.wf.onAgent((e) => {
   }
 })
 
+// Right-click the pet for the menu (back to onboarding, quit)
+canvas.addEventListener('contextmenu', (e) => {
+  e.preventDefault()
+  window.wf.showMenu()
+})
+
 // Tap = greet + show commands. Hold (>350 ms) = talk to the pet.
-canvas.addEventListener('pointerdown', () => {
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return // only the left button talks or taps; right-click opens the menu
   holdTimer = window.setTimeout(() => void startListening(), 350)
 })
-canvas.addEventListener('pointerup', () => {
+canvas.addEventListener('pointerup', (e) => {
+  if (e.button !== 0) return
   if (listening) {
     void stopListening()
     return

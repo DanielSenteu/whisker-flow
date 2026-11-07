@@ -11,10 +11,16 @@ export async function speak(text: string): Promise<string> {
   const key = process.env.ELEVENLABS_API_KEY
   if (!key) throw new Error('ELEVENLABS_API_KEY is not set')
   const voice = process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE
-  const model = process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5'
+  const model = process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2'
+  const settings = {
+    stability: Number(process.env.ELEVENLABS_STABILITY ?? 0.38), // lower = more expressive, less monotone
+    similarity_boost: 0.78,
+    style: Number(process.env.ELEVENLABS_STYLE ?? 0.4),
+    use_speaker_boost: true
+  }
   const dir = join(app.getPath('userData'), 'tts-cache')
   mkdirSync(dir, { recursive: true })
-  const file = join(dir, createHash('sha1').update(`${voice}|${model}|${text}`).digest('hex') + '.mp3')
+  const file = join(dir, createHash('sha1').update(`${voice}|${model}|${JSON.stringify(settings)}|${text}`).digest('hex') + '.mp3')
   if (existsSync(file)) return readFileSync(file).toString('base64')
 
   const res = await fetch(
@@ -22,7 +28,7 @@ export async function speak(text: string): Promise<string> {
     {
       method: 'POST',
       headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model_id: model })
+      body: JSON.stringify({ text, model_id: model, voice_settings: settings })
     }
   )
   if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${(await res.text()).slice(0, 200)}`)

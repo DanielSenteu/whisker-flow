@@ -45,6 +45,7 @@ const api = {
   onAgent: (cb: (e: { type: 'step' | 'done' | 'ask' | 'error'; text: string }) => void): void => {
     ipcRenderer.on('agent:event', (_e, ev) => cb(ev))
   },
+  showMenu: (): void => ipcRenderer.send('pet:menu'),
   cursorX: (): Promise<number | null> => ipcRenderer.invoke('screen:cursorX'),
   setClickThrough: (ignore: boolean): void => ipcRenderer.send('pet:clickThrough', ignore)
 }

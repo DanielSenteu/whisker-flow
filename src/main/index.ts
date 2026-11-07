@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, Menu, screen, shell, systemPreferences } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
@@ -23,6 +23,8 @@ function loadProfile(): PetProfile | null {
   }
 }
 
+// true when the active pet came from the saved/demo path: the background pipeline must NEVER generate (costs money)
+let noGen = false
 let onboardingWin: BrowserWindow | null = null
 let petWin: BrowserWindow | null = null
 
@@ -74,7 +76,7 @@ function createPet(): void {
   // fill in any missing keyframes/clips in the background (cached, so this only generates the gaps)
   petWin.webContents.once('did-finish-load', () => {
     const p = loadProfile()
-    if (p) void runPipeline(p.species, () => petWin)
+    if (p && !noGen) void runPipeline(p.species, () => petWin)
   })
 }
 
@@ -107,6 +109,7 @@ app.whenReady().then(() => {
   ipcMain.handle('pet:createBase', async (_e, v: { photo: string; species: string; hash: string }) => {
     try {
       const r = await createBase(v.photo, v.species, v.hash, loadProfile)
+      noGen = r.reused // a reused pet is already complete: never generate for it
       return { ok: true as const, stand: r.stand, reused: r.reused }
     } catch (err) {
       return { ok: false as const, error: (err as Error).message }
@@ -177,11 +180,13 @@ app.whenReady().then(() => {
   ipcMain.on('pack:stop', () => stopPack())
 
   ipcMain.handle('pets:demo', () => {
+    noGen = true
     const r = demoBase(loadProfile)
     return r ? { ok: true as const, stand: r.stand } : { ok: false as const, error: 'No saved pet to use for the demo' }
   })
   ipcMain.handle('pets:list', () => listSaved(loadProfile))
   ipcMain.handle('pets:use', (_e, id: string) => {
+    noGen = true
     const prof = activate(id, loadProfile)
     if (prof?.name) writeFileSync(profilePath(), JSON.stringify({ name: prof.name, species: prof.species }, null, 2))
     onboardingWin?.close()
@@ -206,11 +211,21 @@ app.whenReady().then(() => {
     onboardingWin?.close()
     if (!petWin) createPet()
   })
-  ipcMain.handle('profile:reset', () => {
+  const backToOnboarding = (): void => {
     archiveCurrent(loadProfile) // never delete a paid-for pet: it can be brought back from the welcome screen
     writeFileSync(profilePath(), 'null')
     petWin?.close()
     if (!onboardingWin) createOnboarding()
+  }
+  ipcMain.handle('profile:reset', backToOnboarding)
+  // right-click on the pet
+  ipcMain.on('pet:menu', () => {
+    if (!petWin) return
+    Menu.buildFromTemplate([
+      { label: 'Back to onboarding…', click: backToOnboarding },
+      { type: 'separator' },
+      { label: 'Quit Whisker Flow', role: 'quit' }
+    ]).popup({ window: petWin })
   })
 
   if (loadProfile()) createPet()
