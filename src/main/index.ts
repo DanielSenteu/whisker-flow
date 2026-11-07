@@ -2,7 +2,7 @@ import { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell, systemPref
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
-import { describeScreen, interpretAudio } from './gemini'
+import { analyzeScreen, interpretAudio } from './gemini'
 import { speak } from './eleven'
 import { closeBrowser, runTask, stopTask } from './agent'
 import { runPack, stopPack } from './pack'
@@ -138,7 +138,7 @@ app.whenReady().then(() => {
         return { ok: false as const, error: `permission (${after})` }
       }
       const p = loadProfile()
-      return { ok: true as const, text: await describeScreen(jpeg.toString('base64'), p?.name ?? 'Buddy', p?.species ?? 'dog') }
+      return { ok: true as const, ...(await analyzeScreen(jpeg.toString('base64'), p?.name ?? 'Buddy', p?.species ?? 'dog')) }
     } catch (err) {
       return { ok: false as const, error: (err as Error).message }
     }

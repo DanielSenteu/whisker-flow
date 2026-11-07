@@ -18,5 +18,7 @@ export type Intent =
   | { kind: 'move_to'; target: 'left_edge' | 'right_edge' | 'center' | 'cursor' | 'a_bit_left' | 'a_bit_right'; heard: string }
   | { kind: 'play_ball'; heard: string }
   | { kind: 'team_task'; goal: string; ack: string; heard: string }
+  | { kind: 'accept_offer'; heard: string }
+  | { kind: 'decline_offer'; heard: string }
   | { kind: 'chat'; reply: string; heard: string }
   | { kind: 'error'; message: string }

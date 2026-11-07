@@ -20,6 +20,11 @@
         box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(6px); transition: all .25s;
       }
       #bubble.show { opacity: 1; transform: none; }
+      #bubble.offer { pointer-events: auto; }
+      #bubble .offerbtns { display: flex; gap: 8px; justify-content: center; margin-top: 9px; }
+      #bubble .offerbtns button { font: inherit; font-size: 13px; font-weight: 800; border: 0; border-radius: 999px; padding: 7px 15px; cursor: pointer; }
+      #bubble .offerbtns .yes { color: #2b0f1d; background: linear-gradient(135deg,#ff8fb1,#ffc2a8); box-shadow: 0 3px 10px rgba(255,143,177,.45); }
+      #bubble .offerbtns .no { color: #6b5b7b; background: #efe9f5; }
       #bubble::after { content: ''; position: absolute; bottom: -7px; left: 50%; width: 14px; height: 14px;
         background: inherit; transform: translateX(-50%) rotate(45deg); }
       #cmds { position: absolute; left: 0; bottom: 150px; display: flex; flex-direction: column; gap: 6px;

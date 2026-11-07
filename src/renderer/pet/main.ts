@@ -546,6 +546,7 @@ ballEl.addEventListener('pointerup', (e) => {
 let bubbleTimer = 0
 function say(text: string, ms = 3500, voice = true): void {
   bubble.textContent = text
+  bubble.classList.remove('offer')
   bubble.classList.add('show')
   window.clearTimeout(bubbleTimer)
   bubbleTimer = window.setTimeout(() => bubble.classList.remove('show'), ms)
@@ -701,6 +702,13 @@ function handleIntent(i: Intent): void {
       say(i.ack, 3500)
       startPack(i.goal)
       break
+    case 'accept_offer':
+      acceptOffer()
+      break
+    case 'decline_offer':
+      if (pendingOffer) declineOffer()
+      else say('Okay!', 2000)
+      break
     case 'chat':
       say(i.reply, 5000)
       break
@@ -718,11 +726,65 @@ function handleIntent(i: Intent): void {
 }
 
 // ---------- screen glance: "what am I working on?" ----------
+// ---------- See -> Offer -> Do: the pet offers a job; the user accepts (button or voice) and the pack runs it ----------
+let pendingOffer: { goal: string; observation: string } | null = null
+let offerTimer = 0
+
+function clearOffer(): void {
+  pendingOffer = null
+  window.clearTimeout(offerTimer)
+  bubble.classList.remove('offer')
+}
+
+function showOffer(text: string, offer: { goal: string; label: string }, observation: string): void {
+  pendingOffer = { goal: offer.goal, observation }
+  bubble.textContent = ''
+  const p = document.createElement('div')
+  p.textContent = text
+  const row = document.createElement('div')
+  row.className = 'offerbtns'
+  const yes = document.createElement('button')
+  yes.className = 'yes'
+  yes.textContent = offer.label || 'Do it'
+  const no = document.createElement('button')
+  no.className = 'no'
+  no.textContent = 'Not now'
+  yes.onclick = (e) => { e.stopPropagation(); acceptOffer() }
+  no.onclick = (e) => { e.stopPropagation(); declineOffer() }
+  row.append(yes, no)
+  bubble.append(p, row)
+  bubble.classList.add('show', 'offer')
+  window.clearTimeout(bubbleTimer)
+  window.clearTimeout(offerTimer)
+  offerTimer = window.setTimeout(() => {
+    clearOffer()
+    bubble.classList.remove('show')
+  }, 60000) // the offer stays up for a minute
+  void talk(text)
+}
+
+function acceptOffer(): void {
+  if (!pendingOffer) {
+    say('What would you like me to do?', 3000)
+    return
+  }
+  const { goal, observation } = pendingOffer
+  clearOffer()
+  say('On it! Calling the pack!', 2500)
+  startPack(observation ? `${goal}\n\nContext: the user's screen showed: ${observation}` : goal)
+}
+
+function declineOffer(): void {
+  clearOffer()
+  say('Okay, maybe later!', 2500)
+}
+
 async function glance(): Promise<void> {
   say('Let me take a look…', 2500)
   const r = await window.wf.glance()
   if (r.ok) {
-    say(r.text, Math.max(7000, r.text.length * 90))
+    if (r.offer) showOffer(r.say, r.offer, r.observation)
+    else say(r.say, Math.max(7000, r.say.length * 90))
   } else if (r.error.startsWith('permission')) {
     say("I need screen recording permission to look. I opened the settings, then restart me!", 7000)
   } else {
@@ -953,7 +1015,7 @@ document.addEventListener('mousemove', (e) => {
   }
   if (!hit) {
     const el = document.elementFromPoint(e.clientX, e.clientY)
-    if (el && (el.closest('#cmds.show') || el.closest('.pup canvas') || el.closest('.pup.bg .info') || el.closest('.pup .log.show'))) hit = true
+    if (el && (el.closest('#cmds.show') || el.closest('#bubble.offer') || el.closest('.pup canvas') || el.closest('.pup.bg .info') || el.closest('.pup .log.show'))) hit = true
   }
   if (hit !== solid) {
     solid = hit
