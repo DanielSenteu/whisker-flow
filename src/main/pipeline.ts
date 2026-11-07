@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { generateClip, generateStill, locateNose, poseFromStandPrompt, standPrompt } from './gemini'
 
@@ -18,8 +18,64 @@ export function readAnchor(): { x: number; y: number } | null {
   }
 }
 
-export function resetPetFiles(): void {
-  rmSync(petDir(), { recursive: true, force: true })
+const archiveRoot = (): string => join(app.getPath('userData'), 'pet-archive')
+const profileFile = (dir: string): string => join(dir, 'profile.json')
+
+/**
+ * Pets are never deleted: the active pet is moved into the archive (with its profile) so the paid-for
+ * clips can be brought back for free. `readProfile` supplies the active pet's name/species.
+ */
+export function archiveCurrent(readProfile: () => unknown): void {
+  const dir = petDir()
+  if (!existsSync(join(dir, 'stills', 'stand.jpg'))) return
+  writeFileSync(profileFile(dir), JSON.stringify(readProfile() ?? {}))
+  mkdirSync(archiveRoot(), { recursive: true })
+  renameSync(dir, join(archiveRoot(), String(Date.now())))
+}
+
+function savedDirs(): { id: string; dir: string }[] {
+  const out: { id: string; dir: string }[] = []
+  if (existsSync(join(petDir(), 'stills', 'stand.jpg'))) out.push({ id: 'active', dir: petDir() })
+  if (existsSync(archiveRoot())) {
+    for (const id of readdirSync(archiveRoot()))
+      if (existsSync(join(archiveRoot(), id, 'stills', 'stand.jpg'))) out.push({ id, dir: join(archiveRoot(), id) })
+  }
+  return out
+}
+
+/** Every pet that is already generated, newest first: these cost nothing to bring back. */
+export function listSaved(readProfile: () => any): { id: string; name: string; species: string }[] {
+  return savedDirs()
+    .map(({ id, dir }) => {
+      let prof: any = id === 'active' ? readProfile() : null
+      if (!prof) {
+        try { prof = JSON.parse(readFileSync(profileFile(dir), 'utf-8')) } catch { prof = {} }
+      }
+      return { id, name: prof?.name ?? 'Saved pet', species: prof?.species ?? 'dog' }
+    })
+    .reverse()
+}
+
+/** Make a saved pet the active one (the current active pet goes to the archive). */
+export function activate(id: string, readProfile: () => unknown): any {
+  const hit = savedDirs().find((d) => d.id === id)
+  if (!hit) return null
+  let prof: any = null
+  try { prof = JSON.parse(readFileSync(profileFile(hit.dir), 'utf-8')) } catch { /* active pet keeps its own */ }
+  if (hit.id !== 'active') {
+    archiveCurrent(readProfile)
+    renameSync(hit.dir, petDir())
+  }
+  return prof
+}
+
+export function findByHash(hash: string): string | null {
+  for (const { id, dir } of savedDirs()) {
+    try {
+      if (readFileSync(join(dir, 'photo.sha1'), 'utf-8').trim() === hash) return id
+    } catch { /* no hash recorded */ }
+  }
+  return null
 }
 
 export function hasBase(): boolean {
@@ -45,13 +101,27 @@ function save(path: string, data: Buffer): void {
   writeFileSync(path, data)
 }
 
-/** Photo in, standing character out. Written to disk; the base64 JPEG is returned for the reveal. */
-export async function createBase(photoDataUrl: string, species: string): Promise<string> {
-  resetPetFiles()
-  const b64 = await generateStill(standPrompt(species), [photoDataUrl])
+/**
+ * Photo in, standing character out. If this exact photo was already turned into a pet, it is brought back for free
+ * (`reused: true`). Otherwise the old pet is archived and a new one is generated (this is the paid path).
+ */
+export async function createBase(
+  photoDataUrl: string,
+  species: string,
+  hash: string,
+  readProfile: () => unknown
+): Promise<{ stand: string; reused: boolean }> {
+  const hit = hash ? findByHash(hash) : null
+  if (hit) {
+    activate(hit, readProfile)
+    return { stand: readFileSync(stillPath('stand')).toString('base64'), reused: true }
+  }
+  const b64 = await generateStill(standPrompt(species), [photoDataUrl]) // may throw: nothing has been touched yet
+  archiveCurrent(readProfile)
   save(join(petDir(), 'photo.jpg'), Buffer.from(photoDataUrl.split(',')[1], 'base64'))
+  if (hash) save(join(petDir(), 'photo.sha1'), Buffer.from(hash))
   save(stillPath('stand'), Buffer.from(b64, 'base64'))
-  return b64
+  return { stand: b64, reused: false }
 }
 
 interface ClipSpec {

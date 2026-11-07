@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
 import { interpretAudio } from './gemini'
 import { speak } from './eleven'
-import { createBase, hasBase, listAssets, readAnchor, readAsset, resetPetFiles, runPipeline } from './pipeline'
+import { activate, archiveCurrent, createBase, hasBase, listAssets, listSaved, petDir, readAnchor, readAsset, runPipeline } from './pipeline'
 import type { PetProfile } from '../shared/types'
 
 loadEnv()
@@ -79,6 +79,9 @@ app.whenReady().then(() => {
   ipcMain.handle('profile:get', () => loadProfile())
   ipcMain.handle('profile:save', (_e, profile: PetProfile) => {
     writeFileSync(profilePath(), JSON.stringify(profile, null, 2))
+    try {
+      writeFileSync(join(petDir(), 'profile.json'), JSON.stringify(profile)) // travels with the pet when archived
+    } catch { /* no pet folder yet */ }
     return true
   })
   ipcMain.handle('keys:status', () => ({
@@ -98,12 +101,21 @@ app.whenReady().then(() => {
   })
 
   // ---- the pet's body ----
-  ipcMain.handle('pet:createBase', async (_e, v: { photo: string; species: string }) => {
+  ipcMain.handle('pet:createBase', async (_e, v: { photo: string; species: string; hash: string }) => {
     try {
-      return { ok: true as const, stand: await createBase(v.photo, v.species) }
+      const r = await createBase(v.photo, v.species, v.hash, loadProfile)
+      return { ok: true as const, stand: r.stand, reused: r.reused }
     } catch (err) {
       return { ok: false as const, error: (err as Error).message }
     }
+  })
+  ipcMain.handle('pets:list', () => listSaved(loadProfile))
+  ipcMain.handle('pets:use', (_e, id: string) => {
+    const prof = activate(id, loadProfile)
+    if (prof?.name) writeFileSync(profilePath(), JSON.stringify({ name: prof.name, species: prof.species }, null, 2))
+    onboardingWin?.close()
+    if (!petWin) createPet()
+    return !!prof
   })
   ipcMain.handle('pet:assets', () => listAssets())
   ipcMain.handle('pet:anchor', () => readAnchor())
@@ -124,8 +136,8 @@ app.whenReady().then(() => {
     if (!petWin) createPet()
   })
   ipcMain.handle('profile:reset', () => {
+    archiveCurrent(loadProfile) // never delete a paid-for pet: it can be brought back from the welcome screen
     writeFileSync(profilePath(), 'null')
-    resetPetFiles()
     petWin?.close()
     if (!onboardingWin) createOnboarding()
   })

@@ -10,6 +10,7 @@ const state = {
   name: '',
   species: null as Species | null,
   photo: '',
+  hash: '',
   coat: { primary: '#c8864b', secondary: '#f3e3cf', eye: '#3b2a1a' }
 }
 
@@ -18,6 +19,23 @@ function go(n: number): void {
   Array.from(dots.children).forEach((d, i) => d.classList.toggle('on', i === n))
 }
 go(0)
+
+// pets that are already generated (free to bring back)
+void window.wf.savedPets().then((pets) => {
+  const box = $('saved')
+  for (const p of pets) {
+    const b = document.createElement('button')
+    b.className = 'ghost'
+    b.textContent = `Use saved ${p.species === 'cat' ? 'cat' : 'dog'}: ${p.name} (free)`
+    b.onclick = async () => {
+      b.disabled = true
+      b.textContent = 'Loading…'
+      await window.wf.useSavedPet(p.id)
+    }
+    box.appendChild(b)
+    box.appendChild(document.createElement('br'))
+  }
+})
 
 $('start').onclick = () => {
   go(1)
@@ -50,8 +68,11 @@ $('speciesNext').onclick = () => {
 // ---- photo ----
 const drop = $('drop')
 const fileInput = $<HTMLInputElement>('file')
-function takeFile(f: File | undefined): void {
+async function takeFile(f: File | undefined): Promise<void> {
   if (!f || !f.type.startsWith('image/')) return
+  // fingerprint of the original file: the same photo again brings back its saved pet for free
+  const digest = await crypto.subtle.digest('SHA-1', await f.arrayBuffer())
+  state.hash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
   const reader = new FileReader()
   reader.onload = () => {
     state.photo = String(reader.result)
@@ -144,7 +165,7 @@ async function build(): Promise<void> {
 
   try {
     smallPhoto = await downscale(state.photo)
-    const r = await window.wf.createBase(smallPhoto, state.species ?? 'dog')
+    const r = await window.wf.createBase(smallPhoto, state.species ?? 'dog', state.hash)
     if (!r.ok) throw new Error(r.error)
     sprite = await keyOutGreen(`data:image/jpeg;base64,${r.stand}`)
     bar.style.width = '100%'
