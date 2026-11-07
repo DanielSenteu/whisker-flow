@@ -1,4 +1,5 @@
-type Species = 'dog' | 'cat'
+import type { Species } from '../../shared/types'
+import { downscale, keyOutGreen } from '../shared/chroma'
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 const steps = Array.from(document.querySelectorAll<HTMLElement>('.step'))
@@ -111,40 +112,66 @@ const STAGES = [
   'Scanning your photo…',
   'Measuring ears and snout…',
   'Matching fur colours…',
-  'Fitting a 3D body…',
+  'Sculpting a 3D body…',
+  'Fluffing up the fur…',
   'Teaching them to say hi…'
 ]
 
-$('photoNext').onclick = async () => {
+let sprite = ''
+let smallPhoto = ''
+
+async function build(): Promise<void> {
   $('nameB').textContent = state.name
   $<HTMLImageElement>('scanImg').src = state.photo
+  $<HTMLButtonElement>('retry').hidden = true
   go(4)
-  const coatP = readCoat(state.photo).catch(() => state.coat)
   const bar = $('barFill')
   const text = $('stageText')
-  for (let i = 0; i < STAGES.length; i++) {
+  bar.style.width = '4%'
+
+  // the staged text keeps the wait fun; the bar creeps toward 92% until the real result lands
+  let i = 0
+  let pct = 4
+  text.textContent = STAGES[0]
+  const ticker = window.setInterval(() => {
+    i = Math.min(i + 1, STAGES.length - 1)
     text.textContent = STAGES[i]
-    bar.style.width = `${((i + 1) / STAGES.length) * 100}%`
-    await new Promise((r) => setTimeout(r, 900))
+  }, 2600)
+  const creep = window.setInterval(() => {
+    pct += (92 - pct) * 0.06
+    bar.style.width = `${pct}%`
+  }, 300)
+
+  try {
+    smallPhoto = await downscale(state.photo)
+    state.coat = await readCoat(smallPhoto).catch(() => state.coat)
+    const r = await window.wf.generateCharacter(smallPhoto, state.species ?? 'dog', 'sitting happily, facing the viewer')
+    if (!r.ok) throw new Error(r.error)
+    sprite = await keyOutGreen(`data:${r.image.mimeType};base64,${r.image.base64}`)
+    bar.style.width = '100%'
+    $<HTMLImageElement>('reveal').src = sprite
+    $('nameC').textContent = state.name
+    await new Promise((res) => setTimeout(res, 500))
+    go(5)
+  } catch (e) {
+    text.textContent = `Something went wrong: ${(e as Error).message.slice(0, 120)}`
+    $<HTMLButtonElement>('retry').hidden = false
+  } finally {
+    window.clearInterval(ticker)
+    window.clearInterval(creep)
   }
-  state.coat = await coatP
-  $('nameC').textContent = state.name
-  $('doneEmoji').textContent = state.species === 'cat' ? '🐱' : '🐶'
-  const sw = $('swatches')
-  sw.innerHTML = ''
-  for (const col of [state.coat.primary, state.coat.secondary, state.coat.eye]) {
-    const b = document.createElement('b')
-    b.style.background = col
-    sw.appendChild(b)
-  }
-  go(5)
 }
+
+$('photoNext').onclick = () => void build()
+$('retry').onclick = () => void build()
 
 $('finish').onclick = async () => {
   await window.wf.saveProfile({
     name: state.name,
     species: state.species ?? 'dog',
-    coat: state.coat
+    coat: state.coat,
+    photo: smallPhoto,
+    sprites: { idle: sprite }
   })
   await window.wf.finishOnboarding()
 }

@@ -7,17 +7,16 @@ import { speak } from './eleven'
 
 loadEnv()
 
-export interface PetProfile {
-  name: string
-  species: 'dog' | 'cat'
-  coat: { primary: string; secondary: string; eye: string }
-}
+import type { PetProfile } from '../shared/types'
 
 const profilePath = (): string => join(app.getPath('userData'), 'pet-profile.json')
 
 function loadProfile(): PetProfile | null {
   try {
-    return existsSync(profilePath()) ? JSON.parse(readFileSync(profilePath(), 'utf-8')) : null
+    if (!existsSync(profilePath())) return null
+    const p = JSON.parse(readFileSync(profilePath(), 'utf-8')) as PetProfile | null
+    // profiles from before character generation have no sprite: send them back through onboarding
+    return p?.sprites?.idle ? p : null
   } catch {
     return null
   }
@@ -98,9 +97,9 @@ app.whenReady().then(() => {
       return { ok: false as const, error: (err as Error).message }
     }
   })
-  ipcMain.handle('character:generate', async (_e, v: { photo: string; species: string; pose: string }) => {
+  ipcMain.handle('character:generate', async (_e, v: { photo: string; species: string; pose: string; reference?: string }) => {
     try {
-      return { ok: true as const, image: await generateCharacterImage(v.photo, v.species, v.pose) }
+      return { ok: true as const, image: await generateCharacterImage(v.photo, v.species, v.pose, v.reference) }
     } catch (err) {
       return { ok: false as const, error: (err as Error).message }
     }

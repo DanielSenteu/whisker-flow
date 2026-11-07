@@ -4,16 +4,17 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; script-src 'self'"
     />
     <title>Whisker Flow Pet</title>
     <style>
       html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none;
         font-family: -apple-system, 'SF Pro Rounded', system-ui, sans-serif; }
-      canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+      #pet { position: absolute; left: 50%; bottom: 44px; height: 230px; max-width: 380px; width: auto;
+        transform-origin: 50% 100%; cursor: pointer; -webkit-user-drag: none; filter: drop-shadow(0 10px 14px rgba(0,0,0,.35)); }
       #bubble {
-        position: absolute; left: 20px; right: 20px; top: 8px; padding: 10px 14px; border-radius: 18px;
-        background: rgba(255,255,255,.96); color: #2a1b3d; font-size: 15px; font-weight: 600;
+        position: absolute; left: 20px; right: 20px; top: 6px; padding: 10px 14px; border-radius: 18px;
+        background: rgba(255,255,255,.96); color: #2a1b3d; font-size: 15px; font-weight: 600; text-align: center;
         box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(6px); transition: all .25s; pointer-events: none;
       }
       #bubble.show { opacity: 1; transform: none; }
@@ -29,13 +30,14 @@
     </style>
   </head>
   <body>
-    <canvas id="c"></canvas>
+    <img id="pet" alt="" draggable="false" />
     <div id="bubble"></div>
     <div id="cmds">
       <button data-cmd="sit">Sit</button>
       <button data-cmd="jump">Jump</button>
       <button data-cmd="speak">Speak</button>
-      <button data-cmd="ball">Ball</button>
+      <button data-cmd="dance">Dance</button>
+      <button data-cmd="sleep">Sleep</button>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

@@ -1,158 +1,53 @@
-import * as THREE from 'three'
+import type { Intent, PetProfile, PoseName } from '../../shared/types'
+import { keyOutGreen, onGreen } from '../shared/chroma'
 
-interface Profile {
-  name: string
-  species: 'dog' | 'cat'
-  coat: { primary: string; secondary: string; eye: string }
-}
-
-const canvas = document.getElementById('c') as HTMLCanvasElement
+const img = document.getElementById('pet') as HTMLImageElement
 const bubble = document.getElementById('bubble') as HTMLDivElement
 const cmds = document.getElementById('cmds') as HTMLDivElement
 
-const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-renderer.setClearColor(0x000000, 0)
-const scene = new THREE.Scene()
-const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 50)
-camera.position.set(0, 1.6, 7.2)
-camera.lookAt(0, 1.1, 0)
-scene.add(new THREE.HemisphereLight(0xffffff, 0x9988aa, 1.15))
-const sun = new THREE.DirectionalLight(0xffffff, 1.6)
-sun.position.set(3, 5, 4)
-scene.add(sun)
-
-function resize(): void {
-  renderer.setSize(window.innerWidth, window.innerHeight, false)
-  camera.aspect = window.innerWidth / window.innerHeight
-  camera.updateProjectionMatrix()
-}
-window.addEventListener('resize', resize)
-resize()
-
-// ---------- the pet ----------
-interface Pet {
-  root: THREE.Group
-  body: THREE.Group
-  head: THREE.Group
-  tail: THREE.Group
-  lids: THREE.Mesh[]
-}
-
-function ball(r: number, mat: THREE.Material, sx = 1, sy = 1, sz = 1): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 24), mat)
-  m.scale.set(sx, sy, sz)
-  return m
-}
-
-function buildPet(p: Profile): Pet {
-  const fur = new THREE.MeshStandardMaterial({ color: p.coat.primary, roughness: 0.9 })
-  const light = new THREE.MeshStandardMaterial({ color: p.coat.secondary, roughness: 0.9 })
-  const eyeMat = new THREE.MeshStandardMaterial({ color: p.coat.eye, roughness: 0.3 })
-  const white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 })
-  const nose = new THREE.MeshStandardMaterial({ color: 0x2a1a22, roughness: 0.4 })
-  const isCat = p.species === 'cat'
-
-  const root = new THREE.Group()
-  const body = new THREE.Group()
-  root.add(body)
-
-  const torso = ball(0.95, fur, 1.2, 0.9, 0.9)
-  torso.position.set(0, 0.95, 0)
-  body.add(torso)
-  const belly = ball(0.7, light, 1.1, 0.7, 0.8)
-  belly.position.set(0.1, 0.72, 0.28)
-  body.add(belly)
-
-  // legs
-  for (const [x, z] of [[-0.7, 0.35], [0.7, 0.35], [-0.65, -0.35], [0.65, -0.35]]) {
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.5, 8, 12), fur)
-    leg.position.set(x, 0.38, z)
-    body.add(leg)
-    const paw = ball(0.24, light, 1, 0.6, 1.2)
-    paw.position.set(x, 0.1, z + 0.08)
-    body.add(paw)
-  }
-
-  // head
-  const head = new THREE.Group()
-  head.position.set(0, 1.85, 0.85)
-  body.add(head)
-  head.add(ball(0.72, fur, 1.05, 0.95, 0.95))
-  const muzzle = ball(0.36, light, 1, 0.8, 0.9)
-  muzzle.position.set(0, -0.2, 0.55)
-  head.add(muzzle)
-  const n = ball(0.1, nose, 1.2, 0.8, 1)
-  n.position.set(0, -0.08, 0.86)
-  head.add(n)
-
-  const lids: THREE.Mesh[] = []
-  for (const s of [-1, 1]) {
-    const eye = ball(0.13, eyeMat)
-    eye.position.set(s * 0.3, 0.1, 0.62)
-    head.add(eye)
-    const shine = ball(0.04, white)
-    shine.position.set(s * 0.3 + 0.04, 0.15, 0.73)
-    head.add(shine)
-    const lid = ball(0.15, fur, 1, 0.01, 1)
-    lid.position.set(s * 0.3, 0.1, 0.63)
-    head.add(lid)
-    lids.push(lid)
-    // ears
-    if (isCat) {
-      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.6, 4), fur)
-      ear.position.set(s * 0.42, 0.72, 0)
-      ear.rotation.z = -s * 0.25
-      ear.rotation.y = Math.PI / 4
-      head.add(ear)
-    } else {
-      const ear = ball(0.3, fur, 0.6, 1.2, 0.35)
-      ear.position.set(s * 0.68, 0.2, -0.05)
-      ear.rotation.z = s * 0.35
-      head.add(ear)
-    }
-  }
-  if (isCat) {
-    // whiskers
-    const wm = new THREE.MeshBasicMaterial({ color: 0xffffff })
-    for (const s of [-1, 1]) {
-      for (const dy of [-0.04, 0.06]) {
-        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.6), wm)
-        w.rotation.z = Math.PI / 2 + s * dy * 3
-        w.position.set(s * 0.55, -0.12 + dy, 0.7)
-        head.add(w)
-      }
-    }
-  }
-
-  // tail pivots at its base so it can wag
-  const tail = new THREE.Group()
-  tail.position.set(0, 1.1, -0.95)
-  const tl = new THREE.Mesh(new THREE.CapsuleGeometry(isCat ? 0.11 : 0.15, isCat ? 1.1 : 0.7, 8, 12), fur)
-  tl.position.set(0, isCat ? 0.55 : 0.3, 0)
-  tail.rotation.x = isCat ? -0.3 : -0.9
-  tail.add(tl)
-  body.add(tail)
-
-  root.position.y = -0.1
-  scene.add(root)
-  return { root, body, head, tail, lids }
-}
-
-// ---------- behaviour ----------
-type Action = 'idle' | 'sit' | 'jump' | 'speak'
-let pet: Pet
-let profile: Profile
-let action: Action = 'idle'
+let profile: PetProfile
+let pose: PoseName = 'idle'
+type Action = 'none' | 'arrive' | 'jump' | 'dance' | 'speak'
+let action: Action = 'arrive'
 let actionT = 0
-let blinkAt = 2
-let sitAmount = 0
 
+// ---------- poses ----------
+const EXTRA_POSES: { name: PoseName; prompt: string }[] = [
+  {
+    name: 'happy',
+    prompt: 'standing on all four legs, mouth open in a big joyful smile, tail up and wagging, one front paw lifted, full of energy'
+  },
+  { name: 'sleep', prompt: 'curled up asleep on the ground, eyes closed, peaceful, head resting on its front paws' }
+]
+
+function setPose(p: PoseName): void {
+  pose = profile.sprites[p] ? p : 'idle'
+  img.src = profile.sprites[pose] as string
+}
+
+/** Generate any missing poses one by one in the background and save them as they land. */
+async function fillPoses(): Promise<void> {
+  for (const { name, prompt } of EXTRA_POSES) {
+    if (profile.sprites[name] || !profile.photo) continue
+    try {
+      const ref = await onGreen(profile.sprites.idle as string)
+      const r = await window.wf.generateCharacter(profile.photo, profile.species, prompt, ref)
+      if (!r.ok) throw new Error(r.error)
+      profile.sprites[name] = await keyOutGreen(`data:${r.image.mimeType};base64,${r.image.base64}`)
+      await window.wf.saveProfile(profile)
+    } catch (e) {
+      console.warn(`[pose:${name}]`, (e as Error).message)
+    }
+  }
+}
+
+// ---------- speech ----------
+let bubbleTimer = 0
 function say(text: string, ms = 3500, voice = true): void {
   bubble.textContent = text
   bubble.classList.add('show')
-  window.clearTimeout((say as unknown as { t?: number }).t)
-  ;(say as unknown as { t?: number }).t = window.setTimeout(() => bubble.classList.remove('show'), ms)
+  window.clearTimeout(bubbleTimer)
+  bubbleTimer = window.setTimeout(() => bubble.classList.remove('show'), ms)
   if (voice) void talk(text)
 }
 
@@ -172,46 +67,58 @@ async function talk(text: string): Promise<void> {
     /* fall through to the browser voice */
   }
   const u = new SpeechSynthesisUtterance(text)
-  u.pitch = profile?.species === 'cat' ? 1.7 : 1.5
+  u.pitch = 1.5
   u.rate = 1.05
   speechSynthesis.speak(u)
 }
 
+// ---------- commands ----------
+function start(a: Action): void {
+  action = a
+  actionT = 0
+}
+
 function run(cmd: string): void {
+  const cat = profile.species === 'cat'
   switch (cmd) {
     case 'sit':
-      action = action === 'sit' ? 'idle' : 'sit'
-      say(action === 'sit' ? 'Sitting pretty!' : 'Back up!')
+      setPose('idle')
+      say('Sitting pretty!')
       break
     case 'jump':
-      action = 'jump'
-      actionT = 0
+      setPose('happy')
+      start('jump')
       say('Wheee!')
       break
     case 'speak':
-      action = 'speak'
-      actionT = 0
-      say(profile.species === 'cat' ? 'Meow!' : 'Woof woof!')
-      break
-    case 'sleep':
-      action = 'sit'
-      say('Zzz… five more minutes.')
+      setPose('happy')
+      start('speak')
+      say(cat ? 'Meow meow!' : 'Woof woof!')
       break
     case 'dance':
-      action = 'jump'
-      actionT = 0
-      say('Look at my moves!')
+      setPose('happy')
+      start('dance')
+      say('Watch my moves!')
+      break
+    case 'sleep':
+      setPose('sleep')
+      start('none')
+      say('Okay… nap time. Zzz.')
       break
     case 'good_boy':
-      action = 'speak'
-      actionT = 0
-      say(profile.species === 'cat' ? 'Purr… I know.' : 'Who, me? Best day ever!')
-      break
-    case 'ball':
-      say('Ball play is coming soon!')
+      setPose('happy')
+      start('speak')
+      say(cat ? 'Purr. I know.' : 'Who, me? Best day ever!')
       break
   }
 }
+
+document.querySelectorAll<HTMLButtonElement>('#cmds button').forEach((b) => {
+  b.onclick = (e) => {
+    e.stopPropagation()
+    run(b.dataset.cmd as string)
+  }
+})
 
 // ---------- hold the pet to talk ----------
 let recorder: MediaRecorder | null = null
@@ -219,6 +126,7 @@ let chunks: Blob[] = []
 let stream: MediaStream | null = null
 let holdTimer = 0
 let listening = false
+let cmdTimer = 0
 
 async function startListening(): Promise<void> {
   try {
@@ -232,6 +140,7 @@ async function startListening(): Promise<void> {
   recorder.ondataavailable = (e) => chunks.push(e.data)
   recorder.start()
   listening = true
+  setPose('idle')
   bubble.textContent = 'Listening…'
   bubble.classList.add('show')
 }
@@ -255,19 +164,21 @@ async function stopListening(): Promise<void> {
     fr.onload = () => res(String(fr.result).split(',')[1] ?? '')
     fr.readAsDataURL(blob)
   })
-  const intent = await window.wf.interpret(b64, (blob.type || 'audio/webm').split(';')[0])
-  handleIntent(intent)
+  handleIntent(await window.wf.interpret(b64, (blob.type || 'audio/webm').split(';')[0]))
 }
 
-function handleIntent(i: Awaited<ReturnType<typeof window.wf.interpret>>): void {
+function handleIntent(i: Intent): void {
   switch (i.kind) {
     case 'pet_command':
       run(i.command)
       break
     case 'chat':
+      setPose('idle')
       say(i.reply, 5000)
+      start('speak')
       break
     case 'browser_task':
+      setPose('happy')
       say(i.ack, 4000)
       console.log('[task]', i.goal) // the browser agent plugs in here
       break
@@ -280,88 +191,97 @@ function handleIntent(i: Awaited<ReturnType<typeof window.wf.interpret>>): void 
   }
 }
 
-document.querySelectorAll<HTMLButtonElement>('#cmds button').forEach((b) => {
-  b.onclick = (e) => {
-    e.stopPropagation()
-    run(b.dataset.cmd as string)
-  }
-})
-
-let cmdTimer = 0
 // Tap = greet + show commands. Hold (>350 ms) = talk to the pet.
-canvas.addEventListener('pointerdown', () => {
+img.addEventListener('pointerdown', () => {
   holdTimer = window.setTimeout(() => void startListening(), 350)
 })
-canvas.addEventListener('pointerup', () => {
+img.addEventListener('pointerup', () => {
   if (listening) {
     void stopListening()
     return
   }
   window.clearTimeout(holdTimer)
+  setPose('idle')
+  start('speak')
   say(`Hey! I'm ${profile.name}. How may I help you?`, 4500)
   cmds.classList.add('show')
   window.clearTimeout(cmdTimer)
   cmdTimer = window.setTimeout(() => cmds.classList.remove('show'), 12000)
 })
 
-const clock = new THREE.Clock()
-function frame(): void {
-  const dt = Math.min(clock.getDelta(), 0.05)
-  const t = clock.elapsedTime
+// ---------- animation: everything is transforms on the sprite ----------
+let last = performance.now()
+function frame(now: number): void {
+  const dt = Math.min((now - last) / 1000, 0.05)
+  last = now
+  const t = now / 1000
   actionT += dt
 
-  // sit blends smoothly
-  sitAmount += ((action === 'sit' ? 1 : 0) - sitAmount) * Math.min(1, dt * 6)
-  let y = -0.1 - sitAmount * 0.25
-  let tilt = -sitAmount * 0.5
+  const asleep = pose === 'sleep'
+  const br = Math.sin(t * (asleep ? 1.2 : 2.2)) * (asleep ? 0.03 : 0.016)
+  let y = 0
+  let sx = 1 - br * 0.5
+  let sy = 1 + br
+  let rot = asleep ? 0 : Math.sin(t * 0.8) * 1.2
 
-  // idle breathing + head look
-  const breathe = Math.sin(t * 2) * 0.025
-  pet.body.scale.y = 1 + breathe
-  pet.head.rotation.y = Math.sin(t * 0.7) * 0.25
-  pet.head.rotation.x = Math.sin(t * 0.9) * 0.06
-
-  // tail wag
-  pet.tail.rotation.z = Math.sin(t * (action === 'speak' ? 14 : 5)) * 0.5
-
-  if (action === 'jump') {
-    const k = actionT / 0.7
-    if (k >= 1) action = 'idle'
-    else y += Math.sin(k * Math.PI) * 1.1
-  }
-  if (action === 'speak') {
-    pet.head.rotation.x = -0.25 + Math.sin(actionT * 22) * 0.12
-    if (actionT > 1.1) action = 'idle'
-  }
-
-  pet.root.position.y = y
-  pet.root.rotation.x = tilt
-  pet.root.rotation.y = Math.sin(t * 0.5) * 0.15 - 0.2
-
-  // blink
-  if (t > blinkAt) {
-    const k = (t - blinkAt) / 0.14
-    const lidY = k < 1 ? k : Math.max(0, 2 - k)
-    for (const l of pet.lids) l.scale.y = 0.01 + lidY * 1.2
-    if (k >= 2) {
-      blinkAt = t + 2 + Math.random() * 3
-      for (const l of pet.lids) l.scale.y = 0.01
+  switch (action) {
+    case 'arrive': {
+      const k = Math.min(actionT / 0.9, 1)
+      // drop in from above and bounce once
+      y = k < 0.7 ? -320 * (1 - (k / 0.7) ** 2) : -Math.sin(((k - 0.7) / 0.3) * Math.PI) * 28
+      if (k < 0.7) sy += 0.08
+      else if (k > 0.72) sy -= 0.1 * Math.sin(((k - 0.7) / 0.3) * Math.PI)
+      if (k >= 1) action = 'none'
+      break
+    }
+    case 'jump': {
+      const k = actionT / 0.75
+      if (k >= 1) {
+        action = 'none'
+        setPose('idle')
+        break
+      }
+      const s = Math.sin(k * Math.PI)
+      y = -s * 95
+      sy += 0.1 * s
+      sx -= 0.05 * s
+      if (k > 0.88) sy -= 0.12 * ((k - 0.88) / 0.12)
+      break
+    }
+    case 'dance': {
+      if (actionT > 2.6) {
+        action = 'none'
+        setPose('idle')
+        break
+      }
+      const s = Math.sin(actionT * 7)
+      y = -Math.abs(s) * 26
+      rot += s * 7
+      sy += Math.abs(s) * 0.05
+      break
+    }
+    case 'speak': {
+      if (actionT > 1.2) {
+        action = 'none'
+        if (pose === 'happy') setPose('idle')
+        break
+      }
+      y = -Math.abs(Math.sin(actionT * 14)) * 9
+      sy += Math.sin(actionT * 28) * 0.018
+      break
     }
   }
 
-  renderer.render(scene, camera)
+  img.style.transform = `translateX(-50%) translateY(${y}px) rotate(${rot}deg) scale(${sx}, ${sy})`
   requestAnimationFrame(frame)
 }
 
 void (async () => {
   const p = await window.wf.getProfile()
-  profile = p ?? {
-    name: 'Buddy',
-    species: 'dog',
-    coat: { primary: '#c8864b', secondary: '#f3e3cf', eye: '#3b2a1a' }
-  }
-  pet = buildPet(profile)
-  frame()
-  // little hello when the pet arrives on the screen edge
-  window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me anytime.`, 4500), 700)
+  if (!p) return
+  profile = p
+  setPose('idle')
+  requestAnimationFrame(frame)
+  window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me, or hold me to talk.`, 4500), 1000)
+  void fillPoses()
 })()
