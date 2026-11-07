@@ -149,7 +149,8 @@ function systemPrompt(petName: string, species: string): string {
     'To search the web, navigate straight to https://duckduckgo.com/?q=<url-encoded query> (never Google). ' +
     'Prefer reading the visible text when the answer is already there instead of clicking around. ' +
     'Never log in, type passwords, enter payment details, buy anything, or solve captchas: call ask_user instead. ' +
-    'Be efficient. If you are stuck after two different attempts, call finish with what you found or ask_user. ' +
+    'Vary your narration like an excited pet and do not start every line with "I am": for example "Sniffing out ramen spots!", "Ooh, this one looks good!", "Let me peek at the reviews." ' +
+    'Be efficient: aim to finish in 6 steps or fewer. If you are stuck after two different attempts, call finish with what you found or ask_user. ' +
     'Be accurate: only report facts you actually saw on a page.'
   )
 }
