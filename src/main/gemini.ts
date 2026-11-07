@@ -6,11 +6,15 @@ const imageModel = (): string => process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-f
 
 export const PET_COMMANDS = ['sit', 'jump', 'sleep', 'dance', 'speak', 'good_boy'] as const
 export type PetCommand = (typeof PET_COMMANDS)[number]
+export const MOVE_TARGETS = ['left_edge', 'right_edge', 'center', 'cursor', 'a_bit_left', 'a_bit_right'] as const
+export type MoveTarget = (typeof MOVE_TARGETS)[number]
 
 export type Intent =
   | { kind: 'pet_command'; command: PetCommand; heard: string }
   | { kind: 'browser_task'; goal: string; ack: string; heard: string }
   | { kind: 'look_at_screen'; heard: string }
+  | { kind: 'move_to'; target: MoveTarget; heard: string }
+  | { kind: 'play_ball'; heard: string }
   | { kind: 'chat'; reply: string; heard: string }
   | { kind: 'error'; message: string }
 
@@ -59,6 +63,29 @@ const DECLARATIONS = [
       },
       required: ['goal', 'ack', 'heard']
     }
+  },
+  {
+    name: 'move_to',
+    description:
+      'The user tells the pet to MOVE somewhere along the bottom of the screen: go to the left / right side, the middle, come over here (to the mouse cursor), or move a little to one side.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        target: {
+          type: 'STRING',
+          enum: [...MOVE_TARGETS],
+          description:
+            'left_edge/right_edge = all the way to that side; center = middle of the screen; cursor = come here / to me / to my mouse; a_bit_left/a_bit_right = a small step in that direction.'
+        },
+        heard: heardProp
+      },
+      required: ['target', 'heard']
+    }
+  },
+  {
+    name: 'play_ball',
+    description: 'The user wants to play fetch: throw the ball, go get the ball, play with the ball, fetch.',
+    parameters: { type: 'OBJECT', properties: { heard: heardProp }, required: ['heard'] }
   },
   {
     name: 'look_at_screen',
@@ -116,6 +143,12 @@ export async function interpretAudio(
           : { kind: 'error', message: 'Unknown command' }
       case 'browser_task':
         return { kind: 'browser_task', goal: String(a.goal), ack: String(a.ack ?? 'On it!'), heard: String(a.heard ?? '') }
+      case 'move_to':
+        return (MOVE_TARGETS as readonly string[]).includes(a.target)
+          ? { kind: 'move_to', target: a.target, heard: String(a.heard ?? '') }
+          : { kind: 'error', message: 'Unknown target' }
+      case 'play_ball':
+        return { kind: 'play_ball', heard: String(a.heard ?? '') }
       case 'look_at_screen':
         return { kind: 'look_at_screen', heard: String(a.heard ?? '') }
       default:
@@ -158,7 +191,7 @@ export function standPrompt(species: string): string {
   return (
     `Turn the ${species} in this photo into an adorable, polished 3D-render character (soft Pixar-style fur, big expressive eyes). ` +
     'Keep its real coat colours, markings and ear shape exactly. Pose: standing on all four legs, relaxed and friendly, ' +
-    `body at a slight three-quarter angle, head turned toward the viewer, mouth slightly open smiling, tail low. ${GREEN_BG}`
+    `body in a slight three-quarter view facing toward the RIGHT side of the image, head turned a little toward the viewer, mouth slightly open smiling, tail low. ${GREEN_BG}`
   )
 }
 

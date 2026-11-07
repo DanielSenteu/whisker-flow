@@ -44,16 +44,15 @@ function createOnboarding(): void {
   onboardingWin.on('closed', () => (onboardingWin = null))
 }
 
-const PET_W = 380
 const PET_H = 540
 
 /** The pet's home: a transparent strip on the bottom-right of the screen. Clicks pass through except on the pet. */
 function createPet(): void {
   const { workArea } = screen.getPrimaryDisplay()
   petWin = new BrowserWindow({
-    width: PET_W,
+    width: workArea.width, // the whole bottom edge of the screen: the pet walks along it
     height: PET_H,
-    x: workArea.x + workArea.width - PET_W - 16,
+    x: workArea.x,
     y: workArea.y + workArea.height - PET_H,
     transparent: true,
     frame: false,
@@ -110,6 +109,10 @@ app.whenReady().then(() => {
   ipcMain.handle('pet:file', (_e, v: { kind: 'still' | 'clip'; name: string }) => {
     const buf = readAsset(v.kind, v.name)
     return buf ? new Uint8Array(buf) : null
+  })
+  ipcMain.handle('screen:cursorX', () => {
+    const b = petWin?.getBounds()
+    return b ? screen.getCursorScreenPoint().x - b.x : null
   })
   ipcMain.on('pet:clickThrough', (_e, ignore: boolean) => {
     petWin?.setIgnoreMouseEvents(!!ignore, { forward: true })

@@ -2,6 +2,8 @@ import type { Intent, PetProfile } from '../../shared/types'
 
 const canvas = document.getElementById('pet') as HTMLCanvasElement
 const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+const dogEl = document.getElementById('dog') as HTMLDivElement
+const ballEl = document.getElementById('ball') as HTMLDivElement
 const bubble = document.getElementById('bubble') as HTMLDivElement
 const cmds = document.getElementById('cmds') as HTMLDivElement
 const learn = document.getElementById('learn') as HTMLDivElement
@@ -16,11 +18,20 @@ const bctx = buf.getContext('2d', { willReadFrequently: true })!
 
 let profile: PetProfile
 
+// ---- the stage: the pet walks along the bottom edge of the screen ----
+const winW = window.innerWidth
+const winH = window.innerHeight
+const HALF = 190 // half the width of the #dog container: keeps bubbles on screen
+const FLOOR = 62 // px between the window bottom and the pet's feet / the ball's resting line
+const MOUTH_DX = 62 // mouth is this far in front of the dog's centre
+const MOUTH_H = 265 // ...and this high above the floor
+let dogX = winW - 260 // centre of the dog
+let face = 1 // 1 = facing right, -1 = facing left
+
 // ======================================================================
 //  Keying: remove the flat green background from a frame
 // ======================================================================
 function sampleKey(): number {
-  // how "green-dominant" the background is, measured from the four corners
   let sum = 0
   let n = 0
   for (const [x, y] of [[2, 2], [W - 10, 2], [2, H - 10], [W - 10, H - 10]]) {
@@ -104,7 +115,6 @@ async function predecodeIdle(state: State): Promise<void> {
   }
   idle[state] = frames
   URL.revokeObjectURL(v.src)
-  if (current === state) mode = { kind: 'idle' }
 }
 
 async function registerAsset(asset: string): Promise<void> {
@@ -125,7 +135,7 @@ async function registerAsset(asset: string): Promise<void> {
 //  Playback + state machine
 // ======================================================================
 let current: State = 'stand'
-type Mode = { kind: 'idle' } | { kind: 'video'; v: HTMLVideoElement; dKey: number }
+type Mode = { kind: 'idle' } | { kind: 'video'; dKey: number; loopFrom?: number }
 let mode: Mode = { kind: 'idle' }
 let hop = 0 // procedural fallback when a clip is missing (seconds into the hop, 0 = off)
 
@@ -148,6 +158,7 @@ async function playClip(name: string): Promise<boolean> {
   const url = clipUrl.get(name)
   if (!url) return false
   const my = epoch
+  video.loop = false
   video.src = url
   video.playbackRate = RATE[name] ?? 1.4
   await waitFor(video, 'loadeddata')
@@ -161,10 +172,25 @@ async function playClip(name: string): Promise<boolean> {
       res()
     }
   })
-  mode = { kind: 'video', v: video, dKey }
+  mode = { kind: 'video', dKey }
   await video.play()
   await ended
   cancelPlay = null
+  return true
+}
+
+/** Start a clip that repeats until stopped (walk / run cycles). */
+async function startLoop(name: string, rate: number, my: number): Promise<boolean> {
+  const url = clipUrl.get(name)
+  if (!url) return false
+  video.loop = false
+  video.src = url
+  video.playbackRate = rate
+  await waitFor(video, 'loadeddata')
+  if (my !== epoch) return false
+  bctx.drawImage(video, 0, 0, W, H)
+  mode = { kind: 'video', dKey: sampleKey(), loopFrom: 0.8 } // the first moments are the stand pose: skip them on repeat
+  await video.play()
   return true
 }
 
@@ -198,9 +224,176 @@ function begin(job: (my: number) => Promise<void>): void {
   }
   cancelPlay?.()
   cancelPlay = null
+  video.pause()
+  if (walk) {
+    const done = walk.done
+    walk = null
+    done()
+  }
+  if (ball.state === 'carried') dropBall()
   mode = { kind: 'idle' }
   void job(epoch).catch((e) => console.warn('[anim]', e))
 }
+
+// ======================================================================
+//  Walking along the bottom of the screen
+// ======================================================================
+interface Walk {
+  x: number
+  speed: number
+  track?: () => number // follow a moving target (the ball) instead of a fixed x
+  until?: () => boolean // only count as arrived when this is true
+  done: () => void
+}
+let walk: Walk | null = null
+
+async function moveTo(
+  x: number,
+  kind: 'walk' | 'run',
+  my: number,
+  opts: { track?: () => number; until?: () => boolean } = {}
+): Promise<void> {
+  await goTo('stand', my)
+  if (my !== epoch) return
+  const clip = clipUrl.has(kind) ? kind : clipUrl.has('walk') ? 'walk' : ''
+  if (clip) await startLoop(clip, kind === 'run' ? 1.15 : 1, my)
+  if (my !== epoch) return
+  await new Promise<void>((res) => {
+    walk = { x: Math.max(HALF, Math.min(winW - HALF, x)), speed: kind === 'run' ? 340 : 150, ...opts, done: res }
+  })
+  if (my !== epoch) return
+  video.pause()
+  mode = { kind: 'idle' }
+}
+
+async function resolveTarget(t: string): Promise<number> {
+  switch (t) {
+    case 'left_edge': return HALF
+    case 'right_edge': return winW - HALF
+    case 'center': return winW / 2
+    case 'a_bit_left': return dogX - 320
+    case 'a_bit_right': return dogX + 320
+    default: return (await window.wf.cursorX()) ?? winW / 2 // 'cursor': come here
+  }
+}
+
+// ======================================================================
+//  The ball: drag + release to throw. The dog chases it, picks it up, brings it back.
+// ======================================================================
+const ball = { x: winW - 70, y: 0, vx: 0, vy: 0, rot: 0, state: 'rest' as 'rest' | 'drag' | 'fly' | 'carried' }
+
+function dropBall(): void {
+  ball.x = dogX + face * MOUTH_DX
+  ball.y = MOUTH_H
+  ball.vx = face * 90
+  ball.vy = 0
+  ball.state = 'fly'
+}
+
+function stepBall(dt: number): void {
+  if (ball.state === 'carried') {
+    ball.x = dogX + face * MOUTH_DX
+    ball.y = MOUTH_H + (walk ? Math.abs(Math.sin(performance.now() / 90)) * 8 : 0)
+  } else if (ball.state === 'fly') {
+    if (!(ball.y === 0 && ball.vy === 0)) {
+      ball.vy -= 2400 * dt
+      ball.y += ball.vy * dt
+      if (ball.y <= 0) {
+        ball.y = 0
+        ball.vy = Math.abs(ball.vy) > 170 ? -ball.vy * 0.55 : 0
+        ball.vx *= 0.9
+      }
+    } else {
+      ball.vx *= 1 - 2.4 * dt // rolling friction
+    }
+    ball.x += ball.vx * dt
+    if (ball.x < 22) { ball.x = 22; ball.vx = Math.abs(ball.vx) * 0.7 }
+    if (ball.x > winW - 22) { ball.x = winW - 22; ball.vx = -Math.abs(ball.vx) * 0.7 }
+    ball.rot += ball.vx * dt * 1.4
+    if (ball.y === 0 && ball.vy === 0 && Math.abs(ball.vx) < 14) {
+      ball.vx = 0
+      ball.state = 'rest'
+    }
+  }
+  ballEl.style.transform = `translate(${ball.x}px, ${-(FLOOR + ball.y)}px) rotate(${ball.rot}deg)`
+}
+
+const sleep = (ms: number, my: number): Promise<void> =>
+  new Promise((res) => setTimeout(res, ms)).then(() => {
+    if (my !== epoch) return
+  })
+
+async function fetchFlow(my: number, homeX: number): Promise<void> {
+  await goTo('stand', my)
+  if (my !== epoch) return
+  // chase the ball (it may still be flying), then wait until it has stopped
+  await moveTo(0, 'run', my, { track: () => ball.x, until: () => ball.state === 'rest' })
+  if (my !== epoch) return
+  ball.state = 'carried'
+  hop = 0.001
+  say('Got it!', 1800)
+  await sleep(350, my)
+  if (my !== epoch) return
+  await moveTo(homeX, 'run', my)
+  if (my !== epoch) return
+  dropBall()
+  say('Here you go!', 2500)
+}
+
+function throwBall(vx: number, vy: number, homeX: number): void {
+  ball.vx = vx
+  ball.vy = vy
+  ball.state = 'fly'
+  begin((my) => fetchFlow(my, Math.max(HALF, Math.min(winW - HALF, homeX))))
+}
+
+/** "Fetch": throw the ball from where it lies, away from the nearest screen edge. */
+function autoThrow(): void {
+  if (ball.state === 'carried') dropBall()
+  const dir = ball.x > winW / 2 ? -1 : 1
+  const home = ball.x
+  ball.y = Math.max(ball.y, 20)
+  throwBall(dir * (1100 + Math.random() * 500), 760 + Math.random() * 240, home)
+}
+
+// drag + flick
+let dragging = false
+let samples: { t: number; x: number; y: number }[] = []
+ballEl.addEventListener('pointerdown', (e) => {
+  if (ball.state === 'carried') return
+  ballEl.setPointerCapture(e.pointerId)
+  dragging = true
+  ball.state = 'drag'
+  ballEl.classList.add('drag')
+  samples = [{ t: performance.now(), x: e.clientX, y: e.clientY }]
+})
+ballEl.addEventListener('pointermove', (e) => {
+  if (!dragging) return
+  ball.x = e.clientX
+  ball.y = Math.max(0, winH - e.clientY - 19 - FLOOR)
+  ball.vx = ball.vy = 0
+  samples.push({ t: performance.now(), x: e.clientX, y: e.clientY })
+})
+ballEl.addEventListener('pointerup', (e) => {
+  if (!dragging) return
+  dragging = false
+  ballEl.classList.remove('drag')
+  const now = performance.now()
+  const recent = samples.filter((s) => now - s.t < 110)
+  const a = recent[0] ?? samples[0]
+  const b = samples[samples.length - 1]
+  const dt = Math.max((b.t - a.t) / 1000, 0.016)
+  let vx = (b.x - a.x) / dt
+  let vy = -(b.y - a.y) / dt
+  const sp = Math.hypot(vx, vy)
+  if (sp > 2800) { vx *= 2800 / sp; vy *= 2800 / sp }
+  if (sp < 120) { vx = 0; vy = 0 } // just put it down
+  if (sp < 120 && ball.y === 0) {
+    ball.state = 'rest'
+    return
+  }
+  throwBall(vx, vy, e.clientX)
+})
 
 // ======================================================================
 //  Speech bubble + voice
@@ -237,6 +430,24 @@ async function talk(text: string): Promise<void> {
 // ======================================================================
 //  Commands
 // ======================================================================
+const MOVE_LINES: Record<string, string> = {
+  cursor: 'Coming!',
+  left_edge: 'Heading left!',
+  right_edge: 'Heading right!',
+  center: 'To the middle!',
+  a_bit_left: 'Okay, a little left.',
+  a_bit_right: 'Okay, a little right.'
+}
+
+function moveCommand(target: string): void {
+  say(MOVE_LINES[target] ?? 'On my way!', 2200)
+  begin(async (my) => {
+    const x = await resolveTarget(target)
+    if (my !== epoch) return
+    await moveTo(x, Math.abs(x - dogX) > 600 ? 'run' : 'walk', my)
+  })
+}
+
 function run(cmd: string): void {
   const cat = profile.species === 'cat'
   switch (cmd) {
@@ -263,6 +474,13 @@ function run(cmd: string): void {
     case 'good_boy':
       say(cat ? 'Purr. I know.' : 'Who, me? Best day ever!')
       begin((my) => action('bark', my))
+      break
+    case 'fetch':
+      say('Fetch! Here I go!', 2000)
+      autoThrow()
+      break
+    case 'come':
+      moveCommand('cursor')
       break
   }
 }
@@ -325,6 +543,12 @@ function handleIntent(i: Intent): void {
     case 'pet_command':
       run(i.command)
       break
+    case 'move_to':
+      moveCommand(i.target)
+      break
+    case 'play_ball':
+      run('fetch')
+      break
     case 'chat':
       say(i.reply, 5000)
       break
@@ -357,18 +581,27 @@ canvas.addEventListener('pointerup', () => {
   cmdTimer = window.setTimeout(() => cmds.classList.remove('show'), 12000)
 })
 
-// ---------- click-through: only the pet itself (and its bubbles/buttons) catches the mouse ----------
+// ---------- click-through: only the pet, the ball and the buttons catch the mouse ----------
 let solid = false
 document.addEventListener('mousemove', (e) => {
-  const r = canvas.getBoundingClientRect()
-  let hit = false
-  if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
-    const x = Math.floor(((e.clientX - r.left) / r.width) * W)
-    const y = Math.floor(((e.clientY - r.top) / r.height) * H)
-    hit = ctx.getImageData(x, y, 1, 1).data[3] > 30
+  let hit = dragging
+  if (!hit) {
+    const r = canvas.getBoundingClientRect()
+    if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
+      let x = Math.floor(((e.clientX - r.left) / r.width) * W)
+      const y = Math.floor(((e.clientY - r.top) / r.height) * H)
+      if (face < 0) x = W - 1 - x
+      hit = ctx.getImageData(Math.max(0, Math.min(W - 1, x)), y, 1, 1).data[3] > 30
+    }
   }
-  const el = document.elementFromPoint(e.clientX, e.clientY)
-  if (el && el !== document.body && el !== document.documentElement && el !== canvas && el.closest('#cmds.show')) hit = true
+  if (!hit) {
+    const b = ballEl.getBoundingClientRect()
+    hit = e.clientX > b.left - 6 && e.clientX < b.right + 6 && e.clientY > b.top - 6 && e.clientY < b.bottom + 6
+  }
+  if (!hit) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    if (el && el.closest('#cmds.show')) hit = true
+  }
   if (hit !== solid) {
     solid = hit
     window.wf.setClickThrough(!hit)
@@ -390,11 +623,33 @@ function frame(now: number): void {
   arriveT += dt
   const t = now / 1000
 
+  // walking: slide along the floor toward the target; the walk/run clip supplies the legs
+  if (walk) {
+    const w = walk
+    const tx = w.track ? w.track() : w.x
+    if (w.track && Math.abs(tx - dogX) > 15) face = tx > dogX ? 1 : -1
+    const aim = w.track ? Math.max(HALF, Math.min(winW - HALF, tx - face * MOUTH_DX)) : tx
+    const diff = aim - dogX
+    if (Math.abs(diff) > 6) {
+      const d = Math.sign(diff)
+      dogX += d * Math.min(w.speed * dt, Math.abs(diff))
+      if (!w.track) face = d
+    } else if (!w.until || w.until()) {
+      walk = null
+      w.done()
+    }
+  }
+  dogEl.style.transform = `translateX(${dogX - HALF}px)`
+  stepBall(dt)
+
   ctx.clearRect(0, 0, W, H)
   let fx = ''
 
   if (mode.kind === 'video') {
-    bctx.drawImage(mode.v, 0, 0, W, H)
+    if (mode.loopFrom !== undefined && video.duration && video.currentTime >= video.duration - 0.1) {
+      video.currentTime = mode.loopFrom
+    }
+    bctx.drawImage(video, 0, 0, W, H)
     ctx.putImageData(keyBuffer(mode.dKey), 0, 0)
   } else {
     const frames = idle[current]
@@ -411,8 +666,7 @@ function frame(now: number): void {
       ctx.drawImage(frames[idleI], 0, 0)
     } else if (stills[current]) {
       ctx.drawImage(stills[current] as ImageBitmap, 0, 0)
-      // no idle clip yet: breathe procedurally
-      const br = Math.sin(t * 2.2) * 0.012
+      const br = Math.sin(t * 2.2) * 0.012 // no idle clip yet: breathe procedurally
       fx += ` scale(${1 - br * 0.5}, ${1 + br})`
     }
   }
@@ -428,7 +682,7 @@ function frame(now: number): void {
     if (hop > 0.7) hop = 0
     else y -= Math.sin((hop / 0.7) * Math.PI) * 70
   }
-  canvas.style.transform = `translateY(${y}px)${fx}`
+  canvas.style.transform = `translateY(${y}px) scaleX(${face})${fx}`
   requestAnimationFrame(frame)
 }
 
@@ -455,7 +709,9 @@ void (async () => {
       'Sitting pretty!', 'Wheee!', 'Watch my moves!', 'Okay… nap time. Zzz.',
       cat ? 'Meow meow!' : 'Woof woof!',
       cat ? 'Purr. I know.' : 'Who, me? Best day ever!',
-      "Hmm, I didn't catch that. Try again?"
+      "Hmm, I didn't catch that. Try again?",
+      'Fetch! Here I go!', 'Got it!', 'Here you go!',
+      ...Object.values(MOVE_LINES)
     ]) await window.wf.speak(line).catch(() => null)
   })()
 

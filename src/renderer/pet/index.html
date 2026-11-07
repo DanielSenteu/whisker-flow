@@ -10,17 +10,19 @@
     <style>
       html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none;
         font-family: -apple-system, 'SF Pro Rounded', system-ui, sans-serif; }
-      #pet { position: absolute; left: 50%; bottom: 0; width: 270px; height: 480px; margin-left: -135px;
-        transform-origin: 50% 100%; cursor: pointer; filter: drop-shadow(0 8px 10px rgba(0,0,0,.3)); }
+      /* the pet and everything that follows it, moved along the bottom edge by JS */
+      #dog { position: absolute; left: 0; bottom: 0; width: 380px; height: 540px; pointer-events: none; will-change: transform; }
+      #pet { position: absolute; left: 55px; bottom: 0; width: 270px; height: 480px; transform-origin: 50% 100%;
+        cursor: pointer; pointer-events: auto; filter: drop-shadow(0 8px 10px rgba(0,0,0,.3)); }
       #bubble {
         position: absolute; left: 16px; right: 16px; top: 8px; padding: 10px 14px; border-radius: 18px;
         background: rgba(255,255,255,.96); color: #2a1b3d; font-size: 15px; font-weight: 600; text-align: center;
-        box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(6px); transition: all .25s; pointer-events: none;
+        box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(6px); transition: all .25s;
       }
       #bubble.show { opacity: 1; transform: none; }
       #bubble::after { content: ''; position: absolute; bottom: -7px; left: 50%; width: 14px; height: 14px;
         background: inherit; transform: translateX(-50%) rotate(45deg); }
-      #cmds { position: absolute; left: 6px; bottom: 150px; display: flex; flex-direction: column; gap: 6px;
+      #cmds { position: absolute; left: 0; bottom: 150px; display: flex; flex-direction: column; gap: 6px;
         opacity: 0; transform: translateX(-8px); transition: all .25s; pointer-events: none; }
       #cmds.show { opacity: 1; transform: none; pointer-events: auto; }
       #cmds button { font: inherit; font-size: 13px; font-weight: 700; color: #2b0f1d; border: 0; padding: 7px 14px;
@@ -28,22 +30,30 @@
         box-shadow: 0 4px 12px rgba(0,0,0,.25); }
       #cmds button:hover { filter: brightness(1.08); }
       #learn { position: absolute; right: 8px; top: 74px; font-size: 11px; font-weight: 700; color: #fff;
-        background: rgba(40,20,60,.78); padding: 5px 10px; border-radius: 999px; opacity: 0; transition: opacity .4s;
-        pointer-events: none; }
+        background: rgba(40,20,60,.78); padding: 5px 10px; border-radius: 999px; opacity: 0; transition: opacity .4s; }
       #learn.show { opacity: 1; }
+      /* the toy: drag it and let go to throw */
+      #ball { position: absolute; left: 0; bottom: 0; width: 38px; height: 38px; margin-left: -19px; font-size: 34px; line-height: 38px;
+        text-align: center; cursor: grab; will-change: transform; filter: drop-shadow(0 4px 4px rgba(0,0,0,.35)); }
+      #ball.drag { cursor: grabbing; }
     </style>
   </head>
   <body>
-    <canvas id="pet" width="360" height="640"></canvas>
-    <div id="bubble"></div>
-    <div id="learn"></div>
-    <div id="cmds">
-      <button data-cmd="sit">Sit</button>
-      <button data-cmd="speak">Speak</button>
-      <button data-cmd="jump">Jump</button>
-      <button data-cmd="dance">Dance</button>
-      <button data-cmd="sleep">Sleep</button>
+    <div id="dog">
+      <canvas id="pet" width="360" height="640"></canvas>
+      <div id="bubble"></div>
+      <div id="learn"></div>
+      <div id="cmds">
+        <button data-cmd="fetch">Fetch</button>
+        <button data-cmd="come">Come</button>
+        <button data-cmd="sit">Sit</button>
+        <button data-cmd="speak">Speak</button>
+        <button data-cmd="jump">Jump</button>
+        <button data-cmd="dance">Dance</button>
+        <button data-cmd="sleep">Sleep</button>
+      </div>
     </div>
+    <div id="ball">🎾</div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

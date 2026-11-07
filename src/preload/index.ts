@@ -23,6 +23,7 @@ const api = {
   onProgress: (cb: (p: Progress) => void): void => {
     ipcRenderer.on('pet:progress', (_e, p: Progress) => cb(p))
   },
+  cursorX: (): Promise<number | null> => ipcRenderer.invoke('screen:cursorX'),
   setClickThrough: (ignore: boolean): void => ipcRenderer.send('pet:clickThrough', ignore)
 }
 

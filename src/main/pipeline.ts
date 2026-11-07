@@ -81,6 +81,20 @@ const CLIPS: ClipSpec[] = [
       'The pet stands in place, perks its ears, lifts its head and speaks out happily twice with its mouth opening, tail wagging, then settles back into the starting pose.'
   },
   {
+    name: 'walk',
+    from: ['stand'],
+    seconds: 4,
+    prompt:
+      'The pet walks forward at a steady natural pace facing right, like walking on a treadmill: its legs perform a repeating walking gait cycle while its body stays in exactly the same position in the frame and does not travel. Head level, tail swaying gently.'
+  },
+  {
+    name: 'run',
+    from: ['stand'],
+    seconds: 4,
+    prompt:
+      'The pet runs at a happy fast trot facing right, like running on a treadmill: its legs perform a repeating running gait cycle (bounding stride, ears bouncing, tail up) while its body stays in exactly the same position in the frame and does not travel across the frame.'
+  },
+  {
     name: 'idle_sit',
     from: ['sit'],
     seconds: 4,
