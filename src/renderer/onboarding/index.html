@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self'"
+    />
+    <title>Whisker Flow</title>
+    <style>
+      :root {
+        --bg: #120d1f;
+        --card: rgba(255, 255, 255, 0.07);
+        --line: rgba(255, 255, 255, 0.14);
+        --text: #f6f1ff;
+        --muted: #b7accf;
+        --accent: #ff8fb1;
+        --accent2: #8fd3ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font-family: -apple-system, 'SF Pro Rounded', 'Inter', system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(900px 500px at 15% 10%, rgba(255, 143, 177, 0.22), transparent 60%),
+          radial-gradient(800px 500px at 90% 90%, rgba(143, 211, 255, 0.18), transparent 60%),
+          var(--bg);
+        display: grid;
+        place-items: center;
+        -webkit-user-select: none;
+        overflow: hidden;
+      }
+      .drag { position: fixed; top: 0; left: 0; right: 0; height: 38px; -webkit-app-region: drag; }
+      .stage { width: 640px; min-height: 440px; position: relative; }
+      .step { display: none; text-align: center; animation: rise 0.5s ease both; }
+      .step.active { display: block; }
+      @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+      h1 { font-size: 44px; margin: 0 0 10px; letter-spacing: -0.02em; }
+      h2 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.01em; }
+      p.sub { color: var(--muted); font-size: 17px; margin: 0 0 28px; }
+      .logo { font-size: 64px; margin-bottom: 8px; filter: drop-shadow(0 8px 24px rgba(255,143,177,.5)); }
+      button.primary {
+        font: inherit; font-weight: 700; font-size: 17px; color: #2b0f1d;
+        background: linear-gradient(135deg, var(--accent), #ffc2a8);
+        border: 0; border-radius: 999px; padding: 14px 34px; cursor: pointer;
+        box-shadow: 0 10px 30px rgba(255, 143, 177, 0.35); transition: transform .15s;
+      }
+      button.primary:hover { transform: translateY(-2px) scale(1.02); }
+      button.primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+      button.ghost { font: inherit; color: var(--muted); background: none; border: 0; cursor: pointer; margin-top: 18px; }
+      input[type='text'] {
+        font: inherit; font-size: 26px; text-align: center; color: var(--text);
+        width: 100%; max-width: 420px; padding: 16px 20px; margin-bottom: 26px;
+        background: var(--card); border: 1px solid var(--line); border-radius: 18px; outline: none;
+        -webkit-user-select: text;
+      }
+      input[type='text']:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(255,143,177,.2); }
+      .choices { display: flex; gap: 22px; justify-content: center; margin-bottom: 30px; }
+      .choice {
+        width: 210px; padding: 26px 16px; background: var(--card); border: 2px solid var(--line);
+        border-radius: 24px; cursor: pointer; transition: all .18s; color: inherit; font: inherit;
+      }
+      .choice:hover { transform: translateY(-4px); }
+      .choice.sel { border-color: var(--accent); background: rgba(255,143,177,.14); box-shadow: 0 12px 34px rgba(255,143,177,.25); }
+      .choice .emoji { font-size: 74px; display: block; }
+      .choice .label { font-size: 20px; font-weight: 700; margin-top: 8px; display: block; }
+      .drop {
+        width: 100%; max-width: 440px; height: 240px; margin: 0 auto 24px; border-radius: 24px;
+        border: 2px dashed var(--line); background: var(--card); display: grid; place-items: center;
+        cursor: pointer; overflow: hidden; transition: border-color .2s; color: var(--muted);
+      }
+      .drop:hover, .drop.over { border-color: var(--accent2); }
+      .drop img { width: 100%; height: 100%; object-fit: cover; }
+      .scanwrap { position: relative; width: 260px; height: 260px; margin: 0 auto 22px; border-radius: 28px; overflow: hidden; border: 1px solid var(--line); }
+      .scanwrap img { width: 100%; height: 100%; object-fit: cover; }
+      .scanline {
+        position: absolute; left: 0; right: 0; height: 60px;
+        background: linear-gradient(to bottom, transparent, rgba(143,211,255,.55), transparent);
+        animation: scan 1.8s ease-in-out infinite;
+      }
+      @keyframes scan { 0% { top: -60px; } 100% { top: 260px; } }
+      .stages { color: var(--muted); font-size: 17px; height: 26px; }
+      .bar { width: 320px; height: 8px; background: var(--card); border-radius: 99px; margin: 16px auto 0; overflow: hidden; }
+      .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent2), var(--accent)); transition: width .5s ease; }
+      .swatches { display: flex; gap: 12px; justify-content: center; margin: 4px 0 26px; }
+      .swatches b { width: 44px; height: 44px; border-radius: 50%; border: 2px solid rgba(255,255,255,.4); display: block; }
+      .dots { position: fixed; bottom: 26px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; }
+      .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: all .3s; }
+      .dots i.on { background: var(--accent); width: 26px; border-radius: 99px; }
+    </style>
+  </head>
+  <body>
+    <div class="drag"></div>
+    <div class="stage">
+      <section class="step active" data-step="0">
+        <div class="logo">🐾</div>
+        <h1>Whisker Flow</h1>
+        <p class="sub">A sidekick that lives on your screen, listens, and gets things done.</p>
+        <button class="primary" id="start">Meet your sidekick</button>
+      </section>
+
+      <section class="step" data-step="1">
+        <h2>What's their name?</h2>
+        <p class="sub">This is what you'll call them. They'll answer to it.</p>
+        <input type="text" id="name" maxlength="20" placeholder="Biscuit" autofocus />
+        <div><button class="primary" id="nameNext" disabled>Next</button></div>
+      </section>
+
+      <section class="step" data-step="2">
+        <h2>Who are we building?</h2>
+        <p class="sub">Pick a body. Your photo decides the look.</p>
+        <div class="choices">
+          <button class="choice" data-species="dog"><span class="emoji">🐶</span><span class="label">Dog</span></button>
+          <button class="choice" data-species="cat"><span class="emoji">🐱</span><span class="label">Cat</span></button>
+        </div>
+        <button class="primary" id="speciesNext" disabled>Next</button>
+      </section>
+
+      <section class="step" data-step="3">
+        <h2>Show us <span id="nameA"></span></h2>
+        <p class="sub">Drop in a clear photo of your pet.</p>
+        <label class="drop" id="drop">
+          <span id="dropHint">Click or drop a photo here</span>
+          <input type="file" id="file" accept="image/*" hidden />
+        </label>
+        <button class="primary" id="photoNext" disabled>Bring them to life</button>
+      </section>
+
+      <section class="step" data-step="4">
+        <div class="scanwrap"><img id="scanImg" alt="" /><div class="scanline"></div></div>
+        <h2>Building <span id="nameB"></span>…</h2>
+        <div class="stages" id="stageText"></div>
+        <div class="bar"><i id="barFill"></i></div>
+      </section>
+
+      <section class="step" data-step="5">
+        <div class="logo" id="doneEmoji">✨</div>
+        <h1><span id="nameC"></span> is ready!</h1>
+        <p class="sub">Coat colors read from your photo:</p>
+        <div class="swatches" id="swatches"></div>
+        <button class="primary" id="finish">Send them to my screen</button>
+      </section>
+    </div>
+    <div class="dots" id="dots"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "whisker-flow",
+  "version": "0.1.0",
+  "description": "Whisker Flow: a digital sidekick pet that lives on your dock, hears you and does real tasks.",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "electron": "^45.2.3",
+    "electron-vite": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}
