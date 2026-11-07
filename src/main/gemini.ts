@@ -86,7 +86,7 @@ const DECLARATIONS = [
   {
     name: 'team_task',
     description:
-      'The user wants real WORK done that involves MORE THAN ONE kind of job (for example music AND research, or research THEN writing a plan/summary/document), or asks for music or an app to be controlled on the Mac (play music, pause, open an app). Hand it to the pack of helper pups. Rewrite the request as one clear goal.',
+      'The user wants real WORK done by the helper pups: placing a PHONE CALL ("call me", "ring my phone", "call Sam"), playing or controlling music on Spotify, opening an app on the Mac, or any request that mixes several kinds of job (music AND research, research THEN writing a plan/summary/document). You CAN do all of these through the pups, so never say you cannot. Rewrite the request as one clear goal.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -109,7 +109,8 @@ const DECLARATIONS = [
   },
   {
     name: 'chat',
-    description: 'Anything else: greetings, questions, small talk. Reply in character in one or two short sentences.',
+    description:
+      'Only for greetings, questions and small talk. NEVER use this for a request to DO something (call, play music, open an app, research, write): those go to team_task, browser_task or the other action functions. Reply in character in one or two short sentences.',
     parameters: {
       type: 'OBJECT',
       properties: { reply: { type: 'STRING' }, heard: heardProp },

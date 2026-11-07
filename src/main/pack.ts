@@ -196,7 +196,9 @@ const SYSTEM_DECLS = [
 async function runOperator(pup: PupInfo, say: (line: string) => void): Promise<Outcome> {
   const system =
     `You are ${pup.name}, a helper pup that controls the user's Mac. Do exactly what the job asks using the tools, one tool per turn, then call done. ` +
-    'Pick the playlist mood that best matches what the user wants to hear.'
+    'Pick the playlist mood that best matches what the user wants to hear. ' +
+    `Saved phone contacts you may call: ${Object.keys(phoneContacts()).join(', ') || 'none'}. ` +
+    'When the user says "me", "my phone", "myself", or a name that is probably a misheard "me" (for example "E"), call who="me".'
   const contents: any[] = [{ role: 'user', parts: [{ text: `Your job: ${pup.task}` }] }]
   const log: string[] = []
   for (let i = 0; i < 5; i++) {
