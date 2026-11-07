@@ -17,6 +17,7 @@ const MAX_STEPS = 14
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 let browser: Browser | null = null
+let bgBrowser: Browser | null = null // a second, invisible Chrome for background pups
 let page: Page | null = null
 let cancelled = false
 
@@ -44,7 +45,8 @@ async function ensurePage(): Promise<Page> {
 }
 
 /** A brand-new Chrome window for one pup, tiled so several pups' windows are visible side by side. */
-export async function newPupPage(slot: number): Promise<Page> {
+export async function newPupPage(slot: number, background = false): Promise<Page> {
+  if (background) return (await (await ensureBgBrowser()).createBrowserContext()).newPage() // invisible: no window at all
   const b = await ensureBrowser()
   const ctx = await b.createBrowserContext()
   const p = await ctx.newPage()
@@ -61,7 +63,26 @@ export async function newPupPage(slot: number): Promise<Page> {
   return p
 }
 
+async function ensureBgBrowser(): Promise<Browser> {
+  if (!bgBrowser || !bgBrowser.connected) {
+    bgBrowser = await puppeteer.launch({
+      executablePath: CHROME,
+      headless: true,
+      defaultViewport: { width: 1280, height: 860 },
+      userDataDir: mkdtempSync(join(tmpdir(), 'wf-chrome-bg-')),
+      args: ['--no-first-run', '--no-default-browser-check']
+    })
+  }
+  return bgBrowser
+}
+
 export async function closeBrowser(): Promise<void> {
+  try {
+    await bgBrowser?.close()
+  } catch {
+    /* already gone */
+  }
+  bgBrowser = null
   try {
     await browser?.close()
   } catch {

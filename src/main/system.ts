@@ -108,7 +108,7 @@ function markdownToHtml(md: string): string {
 }
 
 /** Save a document the pups wrote to ~/Desktop/Whisker Flow and open it. Returns the file path. */
-export async function writeDocument(title: string, markdown: string, writtenBy: string): Promise<string> {
+export async function writeDocument(title: string, markdown: string, writtenBy: string, openAfter = true): Promise<string> {
   const dir = join(homedir(), 'Desktop', 'Whisker Flow')
   mkdirSync(dir, { recursive: true })
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) || 'document'
@@ -123,6 +123,6 @@ export async function writeDocument(title: string, markdown: string, writtenBy: 
 ${markdownToHtml(markdown)}
 </body></html>`
   writeFileSync(file, html)
-  await run('open', [file])
+  if (openAfter) await run('open', [file])
   return file
 }

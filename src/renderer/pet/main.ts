@@ -800,6 +800,7 @@ interface Pup {
   state: 'waiting' | 'working' | 'done' | 'error'
   hopT: number
   index: number
+  bg: boolean
 }
 const pups = new Map<string, Pup>()
 let packRunning = false
@@ -811,24 +812,27 @@ function clearPups(): void {
   pups.clear()
 }
 
-function spawnPup(info: { id: string; name: string; role: string }, index: number): void {
+function spawnPup(info: { id: string; name: string; role: string; background?: boolean }, index: number): void {
   if (pups.has(info.id)) return // never spawn the same pup twice
+  const bg = !!info.background
   const el = document.createElement('div')
-  el.className = 'pup waiting'
+  el.className = bg ? 'pup waiting bg' : 'pup waiting'
   el.innerHTML = `<div class="log"></div><div class="info"><span class="tag">${BADGE[info.role] ?? '🐾'} ${info.name}</span><br/><span class="status">Waiting…</span></div><canvas width="120" height="213"></canvas>`
   const canvasEl = el.querySelector('canvas') as HTMLCanvasElement
   canvasEl.style.filter += ` hue-rotate(${HUE[info.role] ?? 0}deg)`
   const logEl = el.querySelector('.log') as HTMLDivElement
-  canvasEl.addEventListener('pointerup', (e) => {
+  const toggleLog = (e: Event): void => {
     e.stopPropagation()
     pups.forEach((p) => p !== pup && p.logEl.classList.remove('show'))
     logEl.classList.toggle('show')
-  })
+  }
+  canvasEl.addEventListener('pointerup', toggleLog)
+  ;(el.querySelector('.info') as HTMLElement).addEventListener('pointerup', toggleLog)
   packEl.appendChild(el)
   const pup: Pup = {
     id: info.id, role: info.role, el, canvas: canvasEl, c: canvasEl.getContext('2d')!,
     status: el.querySelector('.status') as HTMLDivElement, logEl,
-    x: dogX, spawnT: 0, phase: Math.random() * 6, state: 'waiting', hopT: 0, index
+    x: dogX, spawnT: 0, phase: Math.random() * 6, state: 'waiting', hopT: 0, index, bg
   }
   pup.canvas.style.filter = `drop-shadow(0 5px 6px rgba(0,0,0,.3)) hue-rotate(${HUE[info.role] ?? 0}deg)`
   pups.set(info.id, pup)
@@ -837,12 +841,24 @@ function spawnPup(info: { id: string; name: string; role: string }, index: numbe
 function updatePups(dt: number, t: number): void {
   const frames = idle.stand
   const bmp = frames && frames.length ? frames[idleI % frames.length] : stills.stand
+  let bgI = 0
+  let doneI = 0
   pups.forEach((p) => {
     p.spawnT = Math.min(1, p.spawnT + dt / 0.7)
     // stand to the side of the lead dog with more room, facing it
     const side = dogX > 560 ? -1 : 1
-    const tx = Math.max(70, Math.min(winW - 70, dogX + side * (230 + p.index * 185)))
-    p.x += (tx - p.x) * Math.min(1, dt * 3)
+    if (p.bg) {
+      // background pups are only a status chip, stacked beside the lead dog
+      const cx = Math.max(100, Math.min(winW - 100, dogX + side * 260))
+      p.x += (cx - p.x) * Math.min(1, dt * 3)
+      p.el.style.transform = `translate(${p.x - 90}px, ${-(FLOOR + 8 + bgI * 74)}px)`
+      bgI++
+      return
+    }
+    // a pup that has finished runs back to the lead dog to report; the rest keep their spots
+    const reporting = p.state === 'done'
+    const tx = Math.max(70, Math.min(winW - 70, reporting ? dogX + side * (165 + doneI++ * 85) : dogX + side * (230 + p.index * 185)))
+    p.x += (tx - p.x) * Math.min(1, dt * (reporting ? 2.2 : 3))
     const k = p.spawnT
     const arc = k < 1 ? Math.sin(k * Math.PI) * 150 : 0
     const scale = 0.3 + 0.7 * Math.min(1, k * 1.4)
@@ -937,7 +953,7 @@ document.addEventListener('mousemove', (e) => {
   }
   if (!hit) {
     const el = document.elementFromPoint(e.clientX, e.clientY)
-    if (el && (el.closest('#cmds.show') || el.closest('.pup canvas') || el.closest('.pup .log.show'))) hit = true
+    if (el && (el.closest('#cmds.show') || el.closest('.pup canvas') || el.closest('.pup.bg .info') || el.closest('.pup .log.show'))) hit = true
   }
   if (hit !== solid) {
     solid = hit
