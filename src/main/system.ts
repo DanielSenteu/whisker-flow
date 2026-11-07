@@ -102,7 +102,14 @@ export async function placeCall(who: string, onStatus: (line: string) => void = 
   const res = await fetch(`${base}.json`, {
     method: 'POST',
     headers: { Authorization: auth, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ To: to, From: from, Twiml: '<Response><Pause length="12"/></Response>' }), // rings; says nothing
+    // trial accounts may not send inline TwiML, so point at a hosted one: a silent pause (it rings, nothing is said)
+    body: new URLSearchParams({
+      To: to,
+      From: from,
+      Url:
+        process.env.TWILIO_TWIML_URL ||
+        `https://twimlets.com/echo?Twiml=${encodeURIComponent('<Response><Pause length="12"/></Response>')}`
+    }),
     signal: AbortSignal.timeout(15000)
   })
   const call: any = await res.json()
