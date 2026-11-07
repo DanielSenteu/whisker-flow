@@ -2,21 +2,19 @@ import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
-import { generateCharacterImage, interpretAudio } from './gemini'
+import { interpretAudio } from './gemini'
 import { speak } from './eleven'
+import { createBase, hasBase, listAssets, readAsset, resetPetFiles, runPipeline } from './pipeline'
+import type { PetProfile } from '../shared/types'
 
 loadEnv()
-
-import type { PetProfile } from '../shared/types'
 
 const profilePath = (): string => join(app.getPath('userData'), 'pet-profile.json')
 
 function loadProfile(): PetProfile | null {
   try {
-    if (!existsSync(profilePath())) return null
-    const p = JSON.parse(readFileSync(profilePath(), 'utf-8')) as PetProfile | null
-    // profiles from before character generation have no sprite: send them back through onboarding
-    return p?.sprites?.idle ? p : null
+    if (!existsSync(profilePath()) || !hasBase()) return null
+    return JSON.parse(readFileSync(profilePath(), 'utf-8')) as PetProfile | null
   } catch {
     return null
   }
@@ -25,17 +23,12 @@ function loadProfile(): PetProfile | null {
 let onboardingWin: BrowserWindow | null = null
 let petWin: BrowserWindow | null = null
 
-function pageUrl(page: 'onboarding' | 'pet'): { url?: string; file?: string } {
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    return { url: `${process.env['ELECTRON_RENDERER_URL']}/${page}/index.html` }
-  }
-  return { file: join(__dirname, `../renderer/${page}/index.html`) }
-}
-
 function load(win: BrowserWindow, page: 'onboarding' | 'pet'): void {
-  const t = pageUrl(page)
-  if (t.url) void win.loadURL(t.url)
-  else void win.loadFile(t.file as string)
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    void win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/${page}/index.html`)
+  } else {
+    void win.loadFile(join(__dirname, `../renderer/${page}/index.html`))
+  }
 }
 
 function createOnboarding(): void {
@@ -51,16 +44,17 @@ function createOnboarding(): void {
   onboardingWin.on('closed', () => (onboardingWin = null))
 }
 
-/** The pet's home: a transparent strip sitting on the bottom edge of the screen, above the Dock. */
+const PET_W = 380
+const PET_H = 540
+
+/** The pet's home: a transparent strip on the bottom-right of the screen. Clicks pass through except on the pet. */
 function createPet(): void {
   const { workArea } = screen.getPrimaryDisplay()
-  const w = 420
-  const h = 340
   petWin = new BrowserWindow({
-    width: w,
-    height: h,
-    x: workArea.x + workArea.width - w - 24,
-    y: workArea.y + workArea.height - h,
+    width: PET_W,
+    height: PET_H,
+    x: workArea.x + workArea.width - PET_W - 16,
+    y: workArea.y + workArea.height - PET_H,
     transparent: true,
     frame: false,
     hasShadow: false,
@@ -72,8 +66,14 @@ function createPet(): void {
   if (process.platform === 'darwin') void systemPreferences.askForMediaAccess('microphone')
   petWin.setAlwaysOnTop(true, 'floating')
   petWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  petWin.setIgnoreMouseEvents(true, { forward: true })
   load(petWin, 'pet')
   petWin.on('closed', () => (petWin = null))
+  // fill in any missing keyframes/clips in the background (cached, so this only generates the gaps)
+  petWin.webContents.once('did-finish-load', () => {
+    const p = loadProfile()
+    if (p) void runPipeline(p.species, () => petWin)
+  })
 }
 
 app.whenReady().then(() => {
@@ -97,19 +97,31 @@ app.whenReady().then(() => {
       return { ok: false as const, error: (err as Error).message }
     }
   })
-  ipcMain.handle('character:generate', async (_e, v: { photo: string; species: string; pose: string; reference?: string }) => {
+
+  // ---- the pet's body ----
+  ipcMain.handle('pet:createBase', async (_e, v: { photo: string; species: string }) => {
     try {
-      return { ok: true as const, image: await generateCharacterImage(v.photo, v.species, v.pose, v.reference) }
+      return { ok: true as const, stand: await createBase(v.photo, v.species) }
     } catch (err) {
       return { ok: false as const, error: (err as Error).message }
     }
   })
+  ipcMain.handle('pet:assets', () => listAssets())
+  ipcMain.handle('pet:file', (_e, v: { kind: 'still' | 'clip'; name: string }) => {
+    const buf = readAsset(v.kind, v.name)
+    return buf ? new Uint8Array(buf) : null
+  })
+  ipcMain.on('pet:clickThrough', (_e, ignore: boolean) => {
+    petWin?.setIgnoreMouseEvents(!!ignore, { forward: true })
+  })
+
   ipcMain.handle('onboarding:finish', () => {
     onboardingWin?.close()
     if (!petWin) createPet()
   })
   ipcMain.handle('profile:reset', () => {
     writeFileSync(profilePath(), 'null')
+    resetPetFiles()
     petWin?.close()
     if (!onboardingWin) createOnboarding()
   })
@@ -119,6 +131,5 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  // The pet lives on after onboarding closes; quit only when nothing is left.
   if (process.platform !== 'darwin') app.quit()
 })

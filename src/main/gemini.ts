@@ -126,40 +126,24 @@ export async function interpretAudio(
   }
 }
 
-export interface GeneratedImage {
-  base64: string
-  mimeType: string
+const videoModel = (): string => process.env.GEMINI_VIDEO_MODEL || 'gemini-omni-1.2-flash'
+
+const GREEN_BG =
+  'Full body visible with some margin, centred, on a perfectly flat solid bright green (#00FF00) background, no ground shadow, no text, no props.'
+
+const toPart = (u: string): { inlineData: { mimeType: string; data: string } } => {
+  const m = u.match(/^data:(.+?);base64,(.+)$/)
+  if (!m) throw new Error('Image must be a base64 data URL')
+  return { inlineData: { mimeType: m[1], data: m[2] } }
 }
 
-/** Photo in, stylised 3D-render character image out. Used for the base character and each pose. */
-export async function generateCharacterImage(
-  photoDataUrl: string,
-  species: string,
-  pose: string,
-  referenceDataUrl?: string
-): Promise<GeneratedImage> {
-  const toPart = (u: string): { inlineData: { mimeType: string; data: string } } => {
-    const m = u.match(/^data:(.+?);base64,(.+)$/)
-    if (!m) throw new Error('Image must be a base64 data URL')
-    return { inlineData: { mimeType: m[1], data: m[2] } }
-  }
-  const reqParts: unknown[] = [toPart(photoDataUrl)]
-  let prompt =
-    `Turn the ${species} in this photo into an adorable, polished 3D-render character (soft Pixar-style fur, big expressive eyes). ` +
-    `Keep its real coat colours, markings and ear shape exactly. Pose: ${pose}. `
-  if (referenceDataUrl) {
-    reqParts.push(toPart(referenceDataUrl))
-    prompt =
-      `The first image is the real ${species}. The second image is its finished 3D-render character. ` +
-      `Draw the EXACT same character (same face, fur, markings, proportions, art style) in a new pose: ${pose}. `
-  }
-  prompt += 'Full body, centred, on a perfectly flat solid #00FF00 green background, no shadow, no text, no props.'
-  reqParts.push({ text: prompt })
+/** A still image (9:16) from reference images + a prompt. Returns base64 JPEG/PNG. */
+export async function generateStill(prompt: string, refDataUrls: string[]): Promise<string> {
   const body = await post(
     imageModel(),
     {
-      contents: [{ role: 'user', parts: reqParts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+      contents: [{ role: 'user', parts: [...refDataUrls.map(toPart), { text: prompt }] }],
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '9:16' } }
     },
     90000
   )
@@ -167,5 +151,57 @@ export async function generateCharacterImage(
   const img = parts.find((p) => p.inlineData || p.inline_data)
   const data = img?.inlineData ?? img?.inline_data
   if (!data?.data) throw new Error('Gemini returned no image')
-  return { base64: data.data, mimeType: data.mimeType ?? data.mime_type ?? 'image/png' }
+  return data.data as string
+}
+
+export function standPrompt(species: string): string {
+  return (
+    `Turn the ${species} in this photo into an adorable, polished 3D-render character (soft Pixar-style fur, big expressive eyes). ` +
+    'Keep its real coat colours, markings and ear shape exactly. Pose: standing on all four legs, relaxed and friendly, ' +
+    `body at a slight three-quarter angle, head turned toward the viewer, mouth slightly open smiling, tail low. ${GREEN_BG}`
+  )
+}
+
+export function poseFromStandPrompt(pose: string): string {
+  return (
+    'The first image is the real pet. The second image is its finished 3D-render character. Draw the EXACT same character ' +
+    `(same face, fur, markings, proportions, art style, same camera angle and framing) ${pose}. ${GREEN_BG}`
+  )
+}
+
+const CLIP_RULES =
+  'Camera completely static and locked off. The flat bright green background stays perfectly flat and unchanged for the entire clip. ' +
+  'No shadows on the background, no text, no extra objects. No dialogue, no sound effects, no music.'
+
+/** A 9:16 video clip from one image (animate it) or two (first frame to last frame). Returns the MP4 bytes. */
+export async function generateClip(imageB64s: string[], prompt: string, seconds: number): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set')
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(240000),
+    body: JSON.stringify({
+      model: videoModel(),
+      input: [
+        ...imageB64s.map((data) => ({ type: 'image', data, mime_type: 'image/jpeg' })),
+        { type: 'text', text: `${prompt} ${CLIP_RULES}` }
+      ],
+      response_format: { type: 'video', aspect_ratio: '9:16', resolution: '720p', duration: `${seconds}s` }
+    })
+  })
+  const json: any = await res.json()
+  if (!res.ok) throw new Error(`Omni ${res.status}: ${JSON.stringify(json).slice(0, 240)}`)
+  const find = (o: any): any => {
+    if (!o || typeof o !== 'object') return undefined
+    if (o.type === 'video' && o.data) return o
+    for (const v of Object.values(o)) {
+      const f = find(v)
+      if (f) return f
+    }
+    return undefined
+  }
+  const video = find(json)
+  if (!video) throw new Error('Omni returned no video')
+  return Buffer.from(video.data as string, 'base64')
 }

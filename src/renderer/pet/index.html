@@ -4,38 +4,43 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; script-src 'self'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; script-src 'self'"
     />
     <title>Whisker Flow Pet</title>
     <style>
       html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none;
         font-family: -apple-system, 'SF Pro Rounded', system-ui, sans-serif; }
-      #pet { position: absolute; left: 50%; bottom: 44px; height: 230px; max-width: 380px; width: auto;
-        transform-origin: 50% 100%; cursor: pointer; -webkit-user-drag: none; filter: drop-shadow(0 10px 14px rgba(0,0,0,.35)); }
+      #pet { position: absolute; left: 50%; bottom: 0; width: 270px; height: 480px; margin-left: -135px;
+        transform-origin: 50% 100%; cursor: pointer; filter: drop-shadow(0 8px 10px rgba(0,0,0,.3)); }
       #bubble {
-        position: absolute; left: 20px; right: 20px; top: 6px; padding: 10px 14px; border-radius: 18px;
+        position: absolute; left: 16px; right: 16px; top: 8px; padding: 10px 14px; border-radius: 18px;
         background: rgba(255,255,255,.96); color: #2a1b3d; font-size: 15px; font-weight: 600; text-align: center;
         box-shadow: 0 8px 24px rgba(0,0,0,.25); opacity: 0; transform: translateY(6px); transition: all .25s; pointer-events: none;
       }
       #bubble.show { opacity: 1; transform: none; }
       #bubble::after { content: ''; position: absolute; bottom: -7px; left: 50%; width: 14px; height: 14px;
         background: inherit; transform: translateX(-50%) rotate(45deg); }
-      #cmds { position: absolute; left: 0; right: 0; bottom: 6px; display: flex; gap: 6px; justify-content: center;
-        opacity: 0; transform: translateY(8px); transition: all .25s; pointer-events: none; }
+      #cmds { position: absolute; left: 6px; bottom: 150px; display: flex; flex-direction: column; gap: 6px;
+        opacity: 0; transform: translateX(-8px); transition: all .25s; pointer-events: none; }
       #cmds.show { opacity: 1; transform: none; pointer-events: auto; }
-      #cmds button { font: inherit; font-size: 13px; font-weight: 700; color: #2b0f1d; border: 0; padding: 7px 12px;
+      #cmds button { font: inherit; font-size: 13px; font-weight: 700; color: #2b0f1d; border: 0; padding: 7px 14px;
         border-radius: 999px; background: linear-gradient(135deg,#ff8fb1,#ffc2a8); cursor: pointer;
         box-shadow: 0 4px 12px rgba(0,0,0,.25); }
       #cmds button:hover { filter: brightness(1.08); }
+      #learn { position: absolute; right: 8px; top: 74px; font-size: 11px; font-weight: 700; color: #fff;
+        background: rgba(40,20,60,.78); padding: 5px 10px; border-radius: 999px; opacity: 0; transition: opacity .4s;
+        pointer-events: none; }
+      #learn.show { opacity: 1; }
     </style>
   </head>
   <body>
-    <img id="pet" alt="" draggable="false" />
+    <canvas id="pet" width="360" height="640"></canvas>
     <div id="bubble"></div>
+    <div id="learn"></div>
     <div id="cmds">
       <button data-cmd="sit">Sit</button>
-      <button data-cmd="jump">Jump</button>
       <button data-cmd="speak">Speak</button>
+      <button data-cmd="jump">Jump</button>
       <button data-cmd="dance">Dance</button>
       <button data-cmd="sleep">Sleep</button>
     </div>

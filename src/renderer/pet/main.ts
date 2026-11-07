@@ -1,47 +1,183 @@
-import type { Intent, PetProfile, PoseName } from '../../shared/types'
-import { keyOutGreen, onGreen } from '../shared/chroma'
+import type { Intent, PetProfile } from '../../shared/types'
 
-const img = document.getElementById('pet') as HTMLImageElement
+const canvas = document.getElementById('pet') as HTMLCanvasElement
+const ctx = canvas.getContext('2d', { willReadFrequently: true })!
 const bubble = document.getElementById('bubble') as HTMLDivElement
 const cmds = document.getElementById('cmds') as HTMLDivElement
+const learn = document.getElementById('learn') as HTMLDivElement
+const W = canvas.width
+const H = canvas.height
+
+// off-screen buffer used to key video frames
+const buf = document.createElement('canvas')
+buf.width = W
+buf.height = H
+const bctx = buf.getContext('2d', { willReadFrequently: true })!
 
 let profile: PetProfile
-let pose: PoseName = 'idle'
-type Action = 'none' | 'arrive' | 'jump' | 'dance' | 'speak'
-let action: Action = 'arrive'
-let actionT = 0
 
-// ---------- poses ----------
-const EXTRA_POSES: { name: PoseName; prompt: string }[] = [
-  {
-    name: 'happy',
-    prompt: 'standing on all four legs, mouth open in a big joyful smile, tail up and wagging, one front paw lifted, full of energy'
-  },
-  { name: 'sleep', prompt: 'curled up asleep on the ground, eyes closed, peaceful, head resting on its front paws' }
-]
-
-function setPose(p: PoseName): void {
-  pose = profile.sprites[p] ? p : 'idle'
-  img.src = profile.sprites[pose] as string
+// ======================================================================
+//  Keying: remove the flat green background from a frame
+// ======================================================================
+function sampleKey(): number {
+  // how "green-dominant" the background is, measured from the four corners
+  let sum = 0
+  let n = 0
+  for (const [x, y] of [[2, 2], [W - 10, 2], [2, H - 10], [W - 10, H - 10]]) {
+    const d = bctx.getImageData(x, y, 8, 8).data
+    for (let i = 0; i < d.length; i += 4) {
+      sum += d[i + 1] - Math.max(d[i], d[i + 2])
+      n++
+    }
+  }
+  const k = sum / n
+  return k > 60 ? k : 160
 }
 
-/** Generate any missing poses one by one in the background and save them as they land. */
-async function fillPoses(): Promise<void> {
-  for (const { name, prompt } of EXTRA_POSES) {
-    if (profile.sprites[name] || !profile.photo) continue
-    try {
-      const ref = await onGreen(profile.sprites.idle as string)
-      const r = await window.wf.generateCharacter(profile.photo, profile.species, prompt, ref)
-      if (!r.ok) throw new Error(r.error)
-      profile.sprites[name] = await keyOutGreen(`data:${r.image.mimeType};base64,${r.image.base64}`)
-      await window.wf.saveProfile(profile)
-    } catch (e) {
-      console.warn(`[pose:${name}]`, (e as Error).message)
+function keyBuffer(dKey: number): ImageData {
+  const id = bctx.getImageData(0, 0, W, H)
+  const px = id.data
+  const lo = dKey * 0.3
+  const hi = dKey * 0.62
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i]
+    const b = px[i + 2]
+    const d = px[i + 1] - (r > b ? r : b)
+    if (d >= hi) {
+      px[i + 3] = 0
+    } else {
+      if (d > lo) px[i + 3] = (255 * (hi - d)) / (hi - lo)
+      if (d > 6) px[i + 1] -= d * 0.85 // despill the green fringe on fur edges
+    }
+  }
+  return id
+}
+
+// ======================================================================
+//  Assets (loaded from disk through the main process)
+// ======================================================================
+type State = 'stand' | 'sit' | 'lie'
+const STATES: State[] = ['stand', 'sit', 'lie'] // order along the "ladder"
+
+const stills: Partial<Record<State, ImageBitmap>> = {}
+const idle: Partial<Record<State, ImageBitmap[]>> = {}
+const clipUrl = new Map<string, string>()
+
+async function fileBlob(kind: 'still' | 'clip', name: string, type: string): Promise<Blob | null> {
+  const bytes = await window.wf.file(kind, name)
+  return bytes ? new Blob([bytes as Uint8Array<ArrayBuffer>], { type }) : null
+}
+
+async function loadStill(name: State): Promise<void> {
+  const blob = await fileBlob('still', name, 'image/jpeg')
+  if (!blob) return
+  const img = new Image()
+  img.src = URL.createObjectURL(blob)
+  await img.decode()
+  bctx.clearRect(0, 0, W, H)
+  bctx.drawImage(img, 0, 0, W, H)
+  stills[name] = await createImageBitmap(keyBuffer(sampleKey()))
+}
+
+function waitFor(el: HTMLVideoElement, ev: string): Promise<void> {
+  return new Promise((res) => el.addEventListener(ev, () => res(), { once: true }))
+}
+
+/** Decode an idle clip once into keyed frames so it can be played forward + backward with no seam. */
+async function predecodeIdle(state: State): Promise<void> {
+  const blob = await fileBlob('clip', `idle_${state}`, 'video/mp4')
+  if (!blob) return
+  const v = document.createElement('video')
+  v.muted = true
+  v.src = URL.createObjectURL(blob)
+  await waitFor(v, 'loadeddata')
+  const fps = 12
+  const count = Math.max(2, Math.floor(v.duration * fps))
+  const frames: ImageBitmap[] = []
+  let dKey = 0
+  for (let i = 0; i < count; i++) {
+    v.currentTime = Math.min(i / fps, v.duration - 0.05)
+    await waitFor(v, 'seeked')
+    bctx.drawImage(v, 0, 0, W, H)
+    if (i === 0) dKey = sampleKey()
+    frames.push(await createImageBitmap(keyBuffer(dKey)))
+  }
+  idle[state] = frames
+  URL.revokeObjectURL(v.src)
+  if (current === state) mode = { kind: 'idle' }
+}
+
+async function registerAsset(asset: string): Promise<void> {
+  const [kind, name] = asset.split(':')
+  if (kind === 'still' && (STATES as string[]).includes(name)) {
+    await loadStill(name as State)
+  } else if (kind === 'clip') {
+    if (name.startsWith('idle_')) {
+      await predecodeIdle(name.slice(5) as State)
+    } else {
+      const blob = await fileBlob('clip', name, 'video/mp4')
+      if (blob) clipUrl.set(name, URL.createObjectURL(blob))
     }
   }
 }
 
-// ---------- speech ----------
+// ======================================================================
+//  Playback + state machine
+// ======================================================================
+let current: State = 'stand'
+type Mode = { kind: 'idle' } | { kind: 'video'; v: HTMLVideoElement; dKey: number }
+let mode: Mode = { kind: 'idle' }
+let hop = 0 // procedural fallback when a clip is missing (seconds into the hop, 0 = off)
+
+const video = document.createElement('video')
+video.muted = true
+video.playsInline = true
+
+/** Play a clip to the end with live keying. Resolves false if the clip isn't generated yet. */
+async function playClip(name: string): Promise<boolean> {
+  const url = clipUrl.get(name)
+  if (!url) return false
+  video.src = url
+  await waitFor(video, 'loadeddata')
+  bctx.drawImage(video, 0, 0, W, H)
+  const dKey = sampleKey()
+  const ended = waitFor(video, 'ended')
+  mode = { kind: 'video', v: video, dKey }
+  await video.play()
+  await ended
+  return true
+}
+
+async function goTo(target: State): Promise<void> {
+  while (current !== target) {
+    const i = STATES.indexOf(current)
+    const next = STATES[i + (STATES.indexOf(target) > i ? 1 : -1)]
+    const ok = await playClip(`${current}2${next}`)
+    if (!ok) hop = 0.001 // no clip yet: hop to the new pose instead
+    current = next
+    mode = { kind: 'idle' }
+  }
+}
+
+async function action(name: string): Promise<void> {
+  await goTo('stand')
+  const ok = await playClip(name)
+  if (!ok) hop = 0.001
+  mode = { kind: 'idle' }
+}
+
+// commands run one at a time; a pile-up of taps is trimmed to the latest two
+let chain: Promise<void> = Promise.resolve()
+let pending = 0
+function enqueue(job: () => Promise<void>): void {
+  if (pending >= 2) return
+  pending++
+  chain = chain.then(job).catch((e) => console.warn('[anim]', e)).finally(() => pending--)
+}
+
+// ======================================================================
+//  Speech bubble + voice
+// ======================================================================
 let bubbleTimer = 0
 function say(text: string, ms = 3500, voice = true): void {
   bubble.textContent = text
@@ -52,7 +188,6 @@ function say(text: string, ms = 3500, voice = true): void {
 }
 
 let currentAudio: HTMLAudioElement | null = null
-/** ElevenLabs voice when available; falls back to the browser voice so the pet is never mute. */
 async function talk(text: string): Promise<void> {
   currentAudio?.pause()
   speechSynthesis.cancel()
@@ -72,43 +207,35 @@ async function talk(text: string): Promise<void> {
   speechSynthesis.speak(u)
 }
 
-// ---------- commands ----------
-function start(a: Action): void {
-  action = a
-  actionT = 0
-}
-
+// ======================================================================
+//  Commands
+// ======================================================================
 function run(cmd: string): void {
   const cat = profile.species === 'cat'
   switch (cmd) {
     case 'sit':
-      setPose('idle')
       say('Sitting pretty!')
-      break
-    case 'jump':
-      setPose('happy')
-      start('jump')
-      say('Wheee!')
-      break
-    case 'speak':
-      setPose('happy')
-      start('speak')
-      say(cat ? 'Meow meow!' : 'Woof woof!')
-      break
-    case 'dance':
-      setPose('happy')
-      start('dance')
-      say('Watch my moves!')
+      enqueue(() => goTo('sit'))
       break
     case 'sleep':
-      setPose('sleep')
-      start('none')
       say('Okay… nap time. Zzz.')
+      enqueue(() => goTo('lie'))
+      break
+    case 'jump':
+      say('Wheee!')
+      enqueue(() => action('jump'))
+      break
+    case 'dance':
+      say('Watch my moves!')
+      enqueue(() => action('dance'))
+      break
+    case 'speak':
+      say(cat ? 'Meow meow!' : 'Woof woof!')
+      enqueue(() => action('bark'))
       break
     case 'good_boy':
-      setPose('happy')
-      start('speak')
       say(cat ? 'Purr. I know.' : 'Who, me? Best day ever!')
+      enqueue(() => action('bark'))
       break
   }
 }
@@ -140,7 +267,6 @@ async function startListening(): Promise<void> {
   recorder.ondataavailable = (e) => chunks.push(e.data)
   recorder.start()
   listening = true
-  setPose('idle')
   bubble.textContent = 'Listening…'
   bubble.classList.add('show')
 }
@@ -173,12 +299,9 @@ function handleIntent(i: Intent): void {
       run(i.command)
       break
     case 'chat':
-      setPose('idle')
       say(i.reply, 5000)
-      start('speak')
       break
     case 'browser_task':
-      setPose('happy')
       say(i.ack, 4000)
       console.log('[task]', i.goal) // the browser agent plugs in here
       break
@@ -192,96 +315,118 @@ function handleIntent(i: Intent): void {
 }
 
 // Tap = greet + show commands. Hold (>350 ms) = talk to the pet.
-img.addEventListener('pointerdown', () => {
+canvas.addEventListener('pointerdown', () => {
   holdTimer = window.setTimeout(() => void startListening(), 350)
 })
-img.addEventListener('pointerup', () => {
+canvas.addEventListener('pointerup', () => {
   if (listening) {
     void stopListening()
     return
   }
   window.clearTimeout(holdTimer)
-  setPose('idle')
-  start('speak')
   say(`Hey! I'm ${profile.name}. How may I help you?`, 4500)
   cmds.classList.add('show')
   window.clearTimeout(cmdTimer)
   cmdTimer = window.setTimeout(() => cmds.classList.remove('show'), 12000)
 })
 
-// ---------- animation: everything is transforms on the sprite ----------
+// ---------- click-through: only the pet itself (and its bubbles/buttons) catches the mouse ----------
+let solid = false
+document.addEventListener('mousemove', (e) => {
+  const r = canvas.getBoundingClientRect()
+  let hit = false
+  if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
+    const x = Math.floor(((e.clientX - r.left) / r.width) * W)
+    const y = Math.floor(((e.clientY - r.top) / r.height) * H)
+    hit = ctx.getImageData(x, y, 1, 1).data[3] > 30
+  }
+  const el = document.elementFromPoint(e.clientX, e.clientY)
+  if (el && el !== document.body && el !== document.documentElement && el !== canvas && el.closest('#cmds.show')) hit = true
+  if (hit !== solid) {
+    solid = hit
+    window.wf.setClickThrough(!hit)
+  }
+})
+
+// ======================================================================
+//  Render loop
+// ======================================================================
 let last = performance.now()
+let arriveT = 0
+let idleI = 0
+let idleDir = 1
+let idleClock = 0
+
 function frame(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05)
   last = now
+  arriveT += dt
   const t = now / 1000
-  actionT += dt
 
-  const asleep = pose === 'sleep'
-  const br = Math.sin(t * (asleep ? 1.2 : 2.2)) * (asleep ? 0.03 : 0.016)
-  let y = 0
-  let sx = 1 - br * 0.5
-  let sy = 1 + br
-  let rot = asleep ? 0 : Math.sin(t * 0.8) * 1.2
+  ctx.clearRect(0, 0, W, H)
+  let fx = ''
 
-  switch (action) {
-    case 'arrive': {
-      const k = Math.min(actionT / 0.9, 1)
-      // drop in from above and bounce once
-      y = k < 0.7 ? -320 * (1 - (k / 0.7) ** 2) : -Math.sin(((k - 0.7) / 0.3) * Math.PI) * 28
-      if (k < 0.7) sy += 0.08
-      else if (k > 0.72) sy -= 0.1 * Math.sin(((k - 0.7) / 0.3) * Math.PI)
-      if (k >= 1) action = 'none'
-      break
-    }
-    case 'jump': {
-      const k = actionT / 0.75
-      if (k >= 1) {
-        action = 'none'
-        setPose('idle')
-        break
+  if (mode.kind === 'video') {
+    bctx.drawImage(mode.v, 0, 0, W, H)
+    ctx.putImageData(keyBuffer(mode.dKey), 0, 0)
+  } else {
+    const frames = idle[current]
+    if (frames && frames.length > 1) {
+      // seamless ping-pong loop
+      idleClock += dt
+      if (idleClock > 1 / 12) {
+        idleClock = 0
+        idleI += idleDir
+        if (idleI >= frames.length - 1) idleDir = -1
+        if (idleI <= 0) idleDir = 1
+        idleI = Math.max(0, Math.min(frames.length - 1, idleI))
       }
-      const s = Math.sin(k * Math.PI)
-      y = -s * 95
-      sy += 0.1 * s
-      sx -= 0.05 * s
-      if (k > 0.88) sy -= 0.12 * ((k - 0.88) / 0.12)
-      break
-    }
-    case 'dance': {
-      if (actionT > 2.6) {
-        action = 'none'
-        setPose('idle')
-        break
-      }
-      const s = Math.sin(actionT * 7)
-      y = -Math.abs(s) * 26
-      rot += s * 7
-      sy += Math.abs(s) * 0.05
-      break
-    }
-    case 'speak': {
-      if (actionT > 1.2) {
-        action = 'none'
-        if (pose === 'happy') setPose('idle')
-        break
-      }
-      y = -Math.abs(Math.sin(actionT * 14)) * 9
-      sy += Math.sin(actionT * 28) * 0.018
-      break
+      ctx.drawImage(frames[idleI], 0, 0)
+    } else if (stills[current]) {
+      ctx.drawImage(stills[current] as ImageBitmap, 0, 0)
+      // no idle clip yet: breathe procedurally
+      const br = Math.sin(t * 2.2) * 0.012
+      fx += ` scale(${1 - br * 0.5}, ${1 + br})`
     }
   }
 
-  img.style.transform = `translateX(-50%) translateY(${y}px) rotate(${rot}deg) scale(${sx}, ${sy})`
+  // procedural extras: drop-in arrival, and a hop standing in for any clip that hasn't generated yet
+  let y = 0
+  if (arriveT < 0.9) {
+    const k = arriveT / 0.9
+    y = k < 0.7 ? -520 * (1 - (k / 0.7) ** 2) : -Math.sin(((k - 0.7) / 0.3) * Math.PI) * 30
+  }
+  if (hop > 0) {
+    hop += dt
+    if (hop > 0.7) hop = 0
+    else y -= Math.sin((hop / 0.7) * Math.PI) * 70
+  }
+  canvas.style.transform = `translateY(${y}px)${fx}`
   requestAnimationFrame(frame)
 }
 
+// ======================================================================
+//  Boot
+// ======================================================================
 void (async () => {
   const p = await window.wf.getProfile()
   if (!p) return
   profile = p
-  setPose('idle')
+
+  // wait for the standing still so the very first frame is already the pet
+  await loadStill('stand')
+  for (const a of await window.wf.assets()) await registerAsset(a)
   requestAnimationFrame(frame)
   window.setTimeout(() => say(`Hi, I'm ${profile.name}! Tap me, or hold me to talk.`, 4500), 1000)
-  void fillPoses()
+
+  window.wf.onAssetReady((a) => void registerAsset(a))
+  window.wf.onProgress((pr) => {
+    if (pr.finished) {
+      learn.textContent = pr.done >= pr.total ? 'All tricks learned!' : `Learned ${pr.done}/${pr.total} tricks`
+      window.setTimeout(() => learn.classList.remove('show'), 3000)
+    } else {
+      learn.textContent = `Learning tricks… ${pr.done}/${pr.total}`
+      learn.classList.add('show')
+    }
+  })
 })()

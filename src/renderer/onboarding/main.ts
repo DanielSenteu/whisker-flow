@@ -144,10 +144,9 @@ async function build(): Promise<void> {
 
   try {
     smallPhoto = await downscale(state.photo)
-    state.coat = await readCoat(smallPhoto).catch(() => state.coat)
-    const r = await window.wf.generateCharacter(smallPhoto, state.species ?? 'dog', 'sitting happily, facing the viewer')
+    const r = await window.wf.createBase(smallPhoto, state.species ?? 'dog')
     if (!r.ok) throw new Error(r.error)
-    sprite = await keyOutGreen(`data:${r.image.mimeType};base64,${r.image.base64}`)
+    sprite = await keyOutGreen(`data:image/jpeg;base64,${r.stand}`)
     bar.style.width = '100%'
     $<HTMLImageElement>('reveal').src = sprite
     $('nameC').textContent = state.name
@@ -166,12 +165,6 @@ $('photoNext').onclick = () => void build()
 $('retry').onclick = () => void build()
 
 $('finish').onclick = async () => {
-  await window.wf.saveProfile({
-    name: state.name,
-    species: state.species ?? 'dog',
-    coat: state.coat,
-    photo: smallPhoto,
-    sprites: { idle: sprite }
-  })
+  await window.wf.saveProfile({ name: state.name, species: state.species ?? 'dog' })
   await window.wf.finishOnboarding()
 }

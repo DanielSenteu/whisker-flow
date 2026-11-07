@@ -1,14 +1,14 @@
 export type Species = 'dog' | 'cat'
-export type PoseName = 'idle' | 'happy' | 'sleep'
 
 export interface PetProfile {
   name: string
   species: Species
-  coat: { primary: string; secondary: string; eye: string }
-  /** Downscaled source photo (JPEG data URL), kept so more poses can be generated later. */
-  photo: string
-  /** Transparent PNG data URLs, one per pose. `idle` is required. */
-  sprites: Partial<Record<PoseName, string>>
+}
+
+export interface Progress {
+  done: number
+  total: number
+  finished?: boolean
 }
 
 export type Intent =
