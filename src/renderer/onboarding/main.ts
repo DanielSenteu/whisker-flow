@@ -164,10 +164,18 @@ async function build(): Promise<void> {
   }, 300)
 
   try {
-    smallPhoto = await downscale(state.photo)
-    const r = await window.wf.createBase(smallPhoto, state.species ?? 'dog', state.hash)
-    if (!r.ok) throw new Error(r.error)
-    sprite = await keyOutGreen(`data:image/jpeg;base64,${r.stand}`)
+    if ($<HTMLInputElement>('demo').checked) {
+      // demo mode: same flow and timing, but the pet comes from the saved one (free)
+      await new Promise((res) => setTimeout(res, 7500))
+      const r = await window.wf.demoBase()
+      if (!r.ok) throw new Error(r.error)
+      sprite = await keyOutGreen(`data:image/jpeg;base64,${r.stand}`)
+    } else {
+      smallPhoto = await downscale(state.photo)
+      const r = await window.wf.createBase(smallPhoto, state.species ?? 'dog', state.hash)
+      if (!r.ok) throw new Error(r.error)
+      sprite = await keyOutGreen(`data:image/jpeg;base64,${r.stand}`)
+    }
     bar.style.width = '100%'
     $<HTMLImageElement>('reveal').src = sprite
     $('nameC').textContent = state.name

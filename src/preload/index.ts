@@ -18,6 +18,7 @@ const api = {
     hash: string
   ): Promise<{ ok: true; stand: string; reused: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke('pet:createBase', { photo, species, hash }),
+  demoBase: (): Promise<{ ok: true; stand: string } | { ok: false; error: string }> => ipcRenderer.invoke('pets:demo'),
   savedPets: (): Promise<{ id: string; name: string; species: string }[]> => ipcRenderer.invoke('pets:list'),
   useSavedPet: (id: string): Promise<boolean> => ipcRenderer.invoke('pets:use', id),
   assets: (): Promise<string[]> => ipcRenderer.invoke('pet:assets'),
@@ -29,6 +30,11 @@ const api = {
   },
   onProgress: (cb: (p: Progress) => void): void => {
     ipcRenderer.on('pet:progress', (_e, p: Progress) => cb(p))
+  },
+  runTask: (goal: string): Promise<boolean> => ipcRenderer.invoke('agent:run', goal),
+  stopTask: (): void => ipcRenderer.send('agent:stop'),
+  onAgent: (cb: (e: { type: 'step' | 'done' | 'ask' | 'error'; text: string }) => void): void => {
+    ipcRenderer.on('agent:event', (_e, ev) => cb(ev))
   },
   cursorX: (): Promise<number | null> => ipcRenderer.invoke('screen:cursorX'),
   setClickThrough: (ignore: boolean): void => ipcRenderer.send('pet:clickThrough', ignore)

@@ -69,6 +69,14 @@ export function activate(id: string, readProfile: () => unknown): any {
   return prof
 }
 
+/** Demo mode: bring back the newest saved pet, free, so the full onboarding can be shown without paying for generation. */
+export function demoBase(readProfile: () => any): { stand: string } | null {
+  const saved = listSaved(readProfile)[0]
+  if (!saved) return null
+  activate(saved.id, readProfile)
+  return { stand: readFileSync(stillPath('stand')).toString('base64') }
+}
+
 export function findByHash(hash: string): string | null {
   for (const { id, dir } of savedDirs()) {
     try {

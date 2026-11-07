@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "puppeteer-core": "^25.16.0",
     "three": "^0.187.0"
   },
   "devDependencies": {

@@ -4,7 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
 import { interpretAudio } from './gemini'
 import { speak } from './eleven'
-import { activate, archiveCurrent, createBase, hasBase, listAssets, listSaved, petDir, readAnchor, readAsset, runPipeline } from './pipeline'
+import { closeBrowser, runTask, stopTask } from './agent'
+import { activate, archiveCurrent, createBase, demoBase, hasBase, listAssets, listSaved, petDir, readAnchor, readAsset, runPipeline } from './pipeline'
 import type { PetProfile } from '../shared/types'
 
 loadEnv()
@@ -109,6 +110,26 @@ app.whenReady().then(() => {
       return { ok: false as const, error: (err as Error).message }
     }
   })
+  // ---- the browser agent ----
+  const agentSend = (type: string, text: string): void => {
+    if (petWin && !petWin.isDestroyed()) petWin.webContents.send('agent:event', { type, text })
+  }
+  ipcMain.handle('agent:run', (_e, goal: string) => {
+    const p = loadProfile()
+    void runTask(String(goal).slice(0, 500), p?.name ?? 'Buddy', p?.species ?? 'dog', {
+      step: (t) => agentSend('step', t),
+      done: (t) => agentSend('done', t),
+      ask: (t) => agentSend('ask', t),
+      error: (t) => agentSend('error', t)
+    })
+    return true
+  })
+  ipcMain.on('agent:stop', () => stopTask())
+
+  ipcMain.handle('pets:demo', () => {
+    const r = demoBase(loadProfile)
+    return r ? { ok: true as const, stand: r.stand } : { ok: false as const, error: 'No saved pet to use for the demo' }
+  })
   ipcMain.handle('pets:list', () => listSaved(loadProfile))
   ipcMain.handle('pets:use', (_e, id: string) => {
     const prof = activate(id, loadProfile)
@@ -145,6 +166,8 @@ app.whenReady().then(() => {
   if (loadProfile()) createPet()
   else createOnboarding()
 })
+
+app.on('before-quit', () => void closeBrowser())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

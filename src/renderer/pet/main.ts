@@ -652,7 +652,7 @@ function handleIntent(i: Intent): void {
       break
     case 'browser_task':
       say(i.ack, 4000)
-      console.log('[task]', i.goal) // the browser agent plugs in here
+      startTask(i.goal)
       break
     case 'look_at_screen':
       say('Let me take a look…', 3000) // screen glance plugs in here
@@ -662,6 +662,31 @@ function handleIntent(i: Intent): void {
       console.warn('[intent]', i.message)
   }
 }
+
+// ---------- the browser agent: the pet sits "at work", narrates each step, then reports back ----------
+let taskRunning = false
+function startTask(goal: string): void {
+  taskRunning = true
+  begin((my) => goTo('sit', my))
+  void window.wf.runTask(goal)
+}
+window.wf.onAgent((e) => {
+  if (!taskRunning && e.type !== 'done') return
+  if (e.type === 'step') {
+    say(e.text, 4200)
+  } else if (e.type === 'done') {
+    taskRunning = false
+    begin((my) => action('jump', my))
+    say(e.text, Math.max(6000, e.text.length * 90))
+  } else if (e.type === 'ask') {
+    taskRunning = false
+    say(e.text, Math.max(6000, e.text.length * 90))
+  } else {
+    taskRunning = false
+    say('Oops, I got stuck on that one. Want to try again?', 5000)
+    console.warn('[agent]', e.text)
+  }
+})
 
 // Tap = greet + show commands. Hold (>350 ms) = talk to the pet.
 canvas.addEventListener('pointerdown', () => {
@@ -673,6 +698,12 @@ canvas.addEventListener('pointerup', () => {
     return
   }
   window.clearTimeout(holdTimer)
+  if (taskRunning) {
+    taskRunning = false
+    window.wf.stopTask()
+    say('Okay, stopping!', 2500)
+    return
+  }
   say(`Hey! I'm ${profile.name}. How may I help you?`, 4500)
   cmds.classList.add('show')
   window.clearTimeout(cmdTimer)

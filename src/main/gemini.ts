@@ -262,8 +262,9 @@ export async function locateNose(standJpgBase64: string): Promise<{ x: number; y
   )
   const text: string = body?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
   const j = JSON.parse(text)
-  const x = Number(j.x)
-  const y = Number(j.y)
+  const norm = (v: number): number => (v > 1 && v <= 1000 ? v / 1000 : v) // the model sometimes answers in thousandths
+  const x = norm(Number(j.x))
+  const y = norm(Number(j.y))
   if (!(x > 0 && x < 1 && y > 0 && y < 1)) throw new Error('Bad nose location')
   return { x, y }
 }
