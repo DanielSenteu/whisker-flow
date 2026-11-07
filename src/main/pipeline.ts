@@ -1,4 +1,5 @@
 import { app, BrowserWindow } from 'electron'
+import { execFileSync } from 'child_process'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { generateClip, generateStill, locateNose, poseFromStandPrompt, standPrompt } from './gemini'
@@ -184,6 +185,13 @@ const CLIPS: ClipSpec[] = [
       'The pet runs at a happy fast trot facing right, like running on a treadmill: its legs perform a repeating running gait cycle (bounding stride, ears bouncing, tail up) while its body stays in exactly the same position in the frame and does not travel across the frame.'
   },
   {
+    name: 'turn',
+    from: ['stand', 'stand_flip'], // stand_flip is the standing keyframe mirrored (made with sips)
+    seconds: 3,
+    prompt:
+      'Animate from the first image to the second: the pet turns around on the spot. It starts facing right and smoothly turns its whole body around to face left, shuffling its paws naturally as it turns, ending in exactly the pose of the second image.'
+  },
+  {
     name: 'idle_sit',
     from: ['sit'],
     seconds: 4,
@@ -276,6 +284,14 @@ export async function runPipeline(species: string, getWin: () => BrowserWindow |
         }
       })
     )
+
+    if (!existsSync(stillPath('stand_flip'))) {
+      try {
+        execFileSync('sips', ['-f', 'horizontal', stillPath('stand'), '--out', stillPath('stand_flip')])
+      } catch (e) {
+        console.warn('[pipeline] mirror:', (e as Error).message)
+      }
+    }
 
     const queue = CLIPS.filter((c) => !existsSync(clipPath(c.name)))
     const worker = async (): Promise<void> => {

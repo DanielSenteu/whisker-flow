@@ -31,6 +31,7 @@ const api = {
   onProgress: (cb: (p: Progress) => void): void => {
     ipcRenderer.on('pet:progress', (_e, p: Progress) => cb(p))
   },
+  glance: (): Promise<{ ok: true; text: string } | { ok: false; error: string }> => ipcRenderer.invoke('screen:glance'),
   runTask: (goal: string): Promise<boolean> => ipcRenderer.invoke('agent:run', goal),
   stopTask: (): void => ipcRenderer.send('agent:stop'),
   onAgent: (cb: (e: { type: 'step' | 'done' | 'ask' | 'error'; text: string }) => void): void => {

@@ -185,7 +185,7 @@ function setMode(m: Mode): void {
 // playback speed per clip: transitions and actions run faster than the raw 4 s so the pet feels snappy
 const RATE: Record<string, number> = {
   stand2sit: 1.6, sit2stand: 1.6, sit2lie: 1.5, lie2sit: 1.5,
-  bark: 1.4, jump: 1.3, dance: 1.25
+  bark: 1.4, jump: 1.3, dance: 1.25, turn: 1.5
 }
 
 let epoch = 0 // bumped by every new command: the old one stops and the new one takes over
@@ -299,6 +299,25 @@ function begin(job: (my: number) => Promise<void>): void {
 // ======================================================================
 //  Walking along the bottom of the screen
 // ======================================================================
+let walkClip = '' // which gait clip the current walk uses (restarted after a turn)
+let turning = false
+
+/** Turn on the spot with the real turn-around clip (authored right -> left; mirrored for left -> right). */
+async function turnTo(dir: 1 | -1, my: number): Promise<void> {
+  if (face === dir) return
+  if (!clipVid.has('turn')) {
+    face = dir // no clip yet: the eased flip in the render loop handles it
+    return
+  }
+  face = faceS = dir === -1 ? 1 : -1 // start the clip facing the way the pet is facing now
+  await playClip('turn')
+  face = faceS = dir
+  if (my === epoch) {
+    setMode({ kind: 'idle' })
+    fadeT = 0 // the clip's last frame matches the new facing: a hard cut, no ghost of the old direction
+  }
+}
+
 interface Walk {
   x: number
   speed: number // top ground speed (px/s); also the speed at which the gait clip plays at 1x
@@ -320,6 +339,10 @@ async function moveTo(
   await goTo('stand', my)
   if (my !== epoch) return
   const clip = clipVid.has(kind) ? kind : clipVid.has('walk') ? 'walk' : ''
+  walkClip = clip
+  const first = (opts.track ? opts.track() : x) > dogX ? 1 : -1
+  await turnTo(first, my) // face the way we are about to walk
+  if (my !== epoch) return
   if (clip) await startLoop(clip, my)
   if (my !== epoch) return
   walkTx = opts.track ? opts.track() : x
@@ -604,6 +627,9 @@ function run(cmd: string): void {
     case 'come':
       moveCommand('cursor')
       break
+    case 'look':
+      void glance()
+      break
   }
 }
 
@@ -679,11 +705,25 @@ function handleIntent(i: Intent): void {
       startTask(i.goal)
       break
     case 'look_at_screen':
-      say('Let me take a look…', 3000) // screen glance plugs in here
+      void glance()
       break
     default:
       say("Hmm, I didn't catch that. Try again?", 3000)
       console.warn('[intent]', i.message)
+  }
+}
+
+// ---------- screen glance: "what am I working on?" ----------
+async function glance(): Promise<void> {
+  say('Let me take a look…', 2500)
+  const r = await window.wf.glance()
+  if (r.ok) {
+    say(r.text, Math.max(7000, r.text.length * 90))
+  } else if (r.error === 'permission') {
+    say("I need screen recording permission to look. I opened the settings, then restart me!", 7000)
+  } else {
+    say("Hmm, I couldn't see your screen just now.", 4000)
+    console.warn('[glance]', r.error)
   }
 }
 
@@ -780,22 +820,38 @@ function frame(now: number): void {
     const w = walk
     const raw = w.track ? w.track() : w.x
     walkTx += (raw - walkTx) * Math.min(1, dt * 14) // smooth the chase target so it never jerks
-    if (w.track ? Math.abs(raw - dogX) > 22 : Math.abs(w.x - dogX) > 2) face = (w.track ? raw : w.x) > dogX ? 1 : -1
+    let wantFace = face
+    if (w.track ? Math.abs(raw - dogX) > 22 : Math.abs(w.x - dogX) > 2) wantFace = (w.track ? raw : w.x) > dogX ? 1 : -1
+    const needTurn = wantFace !== face && clipVid.has('turn')
+    if (wantFace !== face && !needTurn) face = wantFace // no turn clip: plain eased flip
     const m = mouthWorld()
     const aim = w.track ? Math.max(HALF, Math.min(winW - HALF, walkTx - (m.x - dogX) - face * 4)) : walkTx
     const diff = aim - dogX
     const dist = Math.abs(diff)
     const accel = w.speed * 2.4
-    const vWant = Math.sign(diff) * Math.min(w.speed, Math.sqrt(2 * accel * 0.65 * dist))
+    const vWant = needTurn || turning ? 0 : Math.sign(diff) * Math.min(w.speed, Math.sqrt(2 * accel * 0.65 * dist))
     const dv = vWant - vel
-    vel += Math.max(-accel * dt, Math.min(accel * dt, dv))
+    vel += Math.max(-accel * dt * (needTurn ? 2.2 : 1), Math.min(accel * dt * (needTurn ? 2.2 : 1), dv))
     dogX += vel * dt
-    if (activeVideo) activeVideo.playbackRate = Math.max(0.4, Math.min(2, Math.abs(vel) / w.speed + 0.15))
-    if (dist < 5 && Math.abs(vel) < 25 && (!w.until || w.until())) {
+    if (needTurn && !turning && Math.abs(vel) < 45) {
+      // reversing direction: it has slowed to a stop, now it turns around properly, then sets off again
+      turning = true
+      const my = epoch
+      void turnTo(wantFace as 1 | -1, my).then(async () => {
+        turning = false
+        if (walk && my === epoch && walkClip) await startLoop(walkClip, my)
+      })
+    }
+    if (activeVideo && !turning) activeVideo.playbackRate = Math.max(0.4, Math.min(2, Math.abs(vel) / w.speed + 0.15))
+    if (dist < 5 && Math.abs(vel) < 25 && !turning && (!w.until || w.until())) {
       walk = null
       vel = 0
       w.done()
     }
+  } else if (Math.abs(vel) > 5) {
+    // a new command cut the walk: coast to a stop instead of freezing on the spot
+    dogX = Math.max(HALF, Math.min(winW - HALF, dogX + vel * dt))
+    vel *= Math.max(0, 1 - dt * 7)
   } else {
     vel = 0
   }
@@ -859,7 +915,8 @@ function frame(now: number): void {
 // debug hook (used to verify transitions from a script; harmless otherwise)
 ;(window as unknown as { __wf: unknown }).__wf = {
   run,
-  state: () => ({ clips: clipVid.size, idles: Object.keys(idle).length, mode: mode.kind, current, fadeT: Math.round(fadeT * 100) / 100, epoch, walking: !!walk })
+  moveCommand,
+  state: () => ({ face, turning, x: Math.round(dogX), vel: Math.round(vel), clips: clipVid.size, idles: Object.keys(idle).length, mode: mode.kind, current, fadeT: Math.round(fadeT * 100) / 100, epoch, walking: !!walk })
 }
 
 // ======================================================================

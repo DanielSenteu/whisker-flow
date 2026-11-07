@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain, screen, systemPreferences } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, shell, systemPreferences } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { loadEnv } from './env'
-import { interpretAudio } from './gemini'
+import { describeScreen, interpretAudio } from './gemini'
 import { speak } from './eleven'
 import { closeBrowser, runTask, stopTask } from './agent'
 import { activate, archiveCurrent, createBase, demoBase, hasBase, listAssets, listSaved, petDir, readAnchor, readAsset, runPipeline } from './pipeline'
@@ -111,6 +111,35 @@ app.whenReady().then(() => {
       return { ok: false as const, error: (err as Error).message }
     }
   })
+  // ---- screen glance: one screenshot, sent to Gemini only when asked, never stored ----
+  ipcMain.handle('screen:glance', async () => {
+    try {
+      if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') === 'denied') {
+        void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+        return { ok: false as const, error: 'permission' }
+      }
+      petWin?.setContentProtection(true) // keep the pet itself out of the screenshot
+      let jpeg: Buffer
+      try {
+        const primary = String(screen.getPrimaryDisplay().id)
+        const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1400, height: 900 } })
+        const src = sources.find((s) => s.display_id === primary) ?? sources[0]
+        if (!src) return { ok: false as const, error: 'no screen' }
+        jpeg = src.thumbnail.toJPEG(68)
+      } finally {
+        petWin?.setContentProtection(false)
+      }
+      if (process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+        void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+        return { ok: false as const, error: 'permission' }
+      }
+      const p = loadProfile()
+      return { ok: true as const, text: await describeScreen(jpeg.toString('base64'), p?.name ?? 'Buddy', p?.species ?? 'dog') }
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message }
+    }
+  })
+
   // ---- the browser agent ----
   const agentSend = (type: string, text: string): void => {
     if (petWin && !petWin.isDestroyed()) petWin.webContents.send('agent:event', { type, text })
