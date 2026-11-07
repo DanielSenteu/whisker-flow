@@ -783,7 +783,7 @@ canvas.addEventListener('pointerup', () => {
 //  The pack: small helper pups that appear beside the lead dog and work in parallel
 // ======================================================================
 const packEl = document.getElementById('pack') as HTMLDivElement
-const BADGE: Record<string, string> = { scout: '🔍', quill: '✍️', dj: '🎵', operator: '🔧' }
+const BADGE: Record<string, string> = { scout: '🔍', quill: '✍️', dj: '🎵', operator: '🔧', ring: '📞' }
 const HUE: Record<string, number> = { scout: 150, quill: 255, dj: 320, operator: 45 }
 
 interface Pup {
@@ -817,7 +817,7 @@ function spawnPup(info: { id: string; name: string; role: string; background?: b
   const bg = !!info.background
   const el = document.createElement('div')
   el.className = bg ? 'pup waiting bg' : 'pup waiting'
-  el.innerHTML = `<div class="log"></div><div class="info"><span class="tag">${BADGE[info.role] ?? '🐾'} ${info.name}</span><br/><span class="status">Waiting…</span></div><canvas width="120" height="213"></canvas>`
+  el.innerHTML = `<div class="log"></div><div class="info"><span class="tag">${info.name === 'Ring' ? BADGE.ring : (BADGE[info.role] ?? '🐾')} ${info.name}</span><br/><span class="status">Waiting…</span></div><canvas width="120" height="213"></canvas>`
   const canvasEl = el.querySelector('canvas') as HTMLCanvasElement
   canvasEl.style.filter += ` hue-rotate(${HUE[info.role] ?? 0}deg)`
   const logEl = el.querySelector('.log') as HTMLDivElement

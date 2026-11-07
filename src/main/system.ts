@@ -72,6 +72,60 @@ export async function openApp(name: string): Promise<string> {
   return `Opened ${clean}`
 }
 
+// ---------------------------------------------------------------- phone calls (Twilio)
+/** Who the pack may call. Only these saved contacts: "me" comes from DEMO_PHONE_NUMBER, the rest from PHONE_CONTACTS (JSON). */
+export function phoneContacts(): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (process.env.DEMO_PHONE_NUMBER) out.me = process.env.DEMO_PHONE_NUMBER
+  try {
+    for (const [k, v] of Object.entries(JSON.parse(process.env.PHONE_CONTACTS || '{}'))) out[k.toLowerCase()] = String(v)
+  } catch {
+    /* ignore a malformed contact list */
+  }
+  return out
+}
+
+/** Place a silent call to a saved contact and report progress (dialing, ringing, picked up...). */
+export async function placeCall(who: string, onStatus: (line: string) => void = () => {}): Promise<string> {
+  const sid = process.env.TWILIO_ACCOUNT_SID
+  const token = process.env.TWILIO_AUTH_TOKEN
+  const from = process.env.TWILIO_FROM_NUMBER
+  if (!sid || !token || !from) throw new Error('Twilio is not set up yet')
+  const contacts = phoneContacts()
+  const key = String(who || 'me').toLowerCase().trim()
+  const to = contacts[key === 'myself' || key === 'my phone' ? 'me' : key]
+  if (!to) throw new Error(`I only call saved contacts (${Object.keys(contacts).join(', ') || 'none saved'})`)
+
+  const auth = 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64')
+  const base = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls`
+  onStatus('Dialing…')
+  const res = await fetch(`${base}.json`, {
+    method: 'POST',
+    headers: { Authorization: auth, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ To: to, From: from, Twiml: '<Response><Pause length="12"/></Response>' }), // rings; says nothing
+    signal: AbortSignal.timeout(15000)
+  })
+  const call: any = await res.json()
+  if (!res.ok) throw new Error(String(call?.message ?? `Twilio ${res.status}`).slice(0, 140))
+
+  let last = ''
+  for (let i = 0; i < 24; i++) {
+    await sleep(1500)
+    const s: any = await (await fetch(`${base}/${call.sid}.json`, { headers: { Authorization: auth } })).json()
+    const st = String(s.status)
+    if (st !== last) {
+      last = st
+      if (st === 'ringing') onStatus(`Ringing ${key === 'me' ? 'your phone' : key}…`)
+      if (st === 'in-progress') onStatus('They picked up!')
+    }
+    if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(st)) {
+      return st === 'completed' ? `Called ${key}: they picked up` : `Called ${key}: ${st.replace('-', ' ')}`
+    }
+    if (st === 'in-progress') return `Called ${key}: they picked up`
+  }
+  return `Called ${key}: still ringing`
+}
+
 // ---------------------------------------------------------------- documents
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const inline = (s: string): string =>
