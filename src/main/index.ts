@@ -222,6 +222,9 @@ app.whenReady().then(() => {
   ipcMain.on('pet:menu', () => {
     if (!petWin) return
     Menu.buildFromTemplate([
+      { label: 'Stop talking', click: () => petWin?.webContents.send('pet:cmd', 'stop-talking') },
+      { label: 'Stop everything', click: () => petWin?.webContents.send('pet:cmd', 'stop-all') },
+      { type: 'separator' },
       { label: 'Back to onboarding…', click: backToOnboarding },
       { type: 'separator' },
       { label: 'Quit Whisker Flow', role: 'quit' }

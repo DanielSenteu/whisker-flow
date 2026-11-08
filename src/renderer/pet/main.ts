@@ -545,6 +545,7 @@ ballEl.addEventListener('pointerup', (e) => {
 // ======================================================================
 let bubbleTimer = 0
 function say(text: string, ms = 3500, voice = true): void {
+  if (quiet) voice = false // after "Stop talking" the pet stays silent until the next thing you ask it
   bubble.textContent = text
   bubble.classList.remove('offer')
   bubble.classList.add('show')
@@ -554,11 +555,45 @@ function say(text: string, ms = 3500, voice = true): void {
 }
 
 let currentAudio: HTMLAudioElement | null = null
+let talkEpoch = 0 // bumped by "stop talking": any speech still being fetched is thrown away
+let quiet = false
+
+function isSpeaking(): boolean {
+  return !!(currentAudio && !currentAudio.paused && !currentAudio.ended) || speechSynthesis.speaking
+}
+
+/** Silence the pet right now: stop the audio, drop anything still loading, hide the bubble. */
+function stopTalking(): void {
+  talkEpoch++
+  currentAudio?.pause()
+  currentAudio = null
+  speechSynthesis.cancel()
+  window.clearTimeout(bubbleTimer)
+  bubble.classList.remove('show', 'offer')
+  quiet = true
+}
+
+/** Stop talking AND stop whatever it is doing, ready for the next request. */
+function stopEverything(): void {
+  stopTalking()
+  taskRunning = false
+  packRunning = false
+  window.wf.stopTask()
+  window.wf.stopPack()
+  clearPups()
+  clearOffer()
+  cmds.classList.remove('show')
+  begin((my) => goTo('stand', my))
+  quiet = false // fresh start: the next thing it says will be spoken
+}
+
 async function talk(text: string): Promise<void> {
+  const epoch = talkEpoch
   currentAudio?.pause()
   speechSynthesis.cancel()
   try {
     const r = await window.wf.speak(text)
+    if (epoch !== talkEpoch) return // stopped while this line was being fetched
     if (r.ok) {
       currentAudio = new Audio(`data:audio/mpeg;base64,${r.audio}`)
       await currentAudio.play()
@@ -567,6 +602,7 @@ async function talk(text: string): Promise<void> {
   } catch {
     /* fall through to the browser voice */
   }
+  if (epoch !== talkEpoch) return
   const u = new SpeechSynthesisUtterance(text)
   u.pitch = 1.5
   u.rate = 1.05
@@ -637,6 +673,7 @@ function run(cmd: string): void {
 document.querySelectorAll<HTMLButtonElement>('#cmds button').forEach((b) => {
   b.onclick = (e) => {
     e.stopPropagation()
+    quiet = false
     run(b.dataset.cmd as string)
   }
 })
@@ -817,6 +854,8 @@ window.wf.onAgent((e) => {
   }
 })
 
+window.wf.onCommand((c) => (c === 'stop-all' ? stopEverything() : stopTalking()))
+
 // Right-click the pet for the menu (back to onboarding, quit)
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault()
@@ -826,6 +865,7 @@ canvas.addEventListener('contextmenu', (e) => {
 // Tap = greet + show commands. Hold (>350 ms) = talk to the pet.
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return // only the left button talks or taps; right-click opens the menu
+  quiet = false
   holdTimer = window.setTimeout(() => void startListening(), 350)
 })
 canvas.addEventListener('pointerup', (e) => {
@@ -835,6 +875,11 @@ canvas.addEventListener('pointerup', (e) => {
     return
   }
   window.clearTimeout(holdTimer)
+  if (isSpeaking()) {
+    stopTalking() // a tap while it is mid-sentence just shuts it up
+    quiet = false
+    return
+  }
   if (taskRunning || packRunning) {
     taskRunning = false
     packRunning = false
@@ -1147,6 +1192,10 @@ function frame(now: number): void {
 // debug hook (used to verify transitions from a script; harmless otherwise)
 ;(window as unknown as { __wf: unknown }).__wf = {
   run,
+  say,
+  stopTalking,
+  stopEverything,
+  isSpeaking,
   moveCommand,
   state: () => ({ face, turning, x: Math.round(dogX), vel: Math.round(vel), clips: clipVid.size, idles: Object.keys(idle).length, mode: mode.kind, current, fadeT: Math.round(fadeT * 100) / 100, epoch, walking: !!walk })
 }
