@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 // A premade ElevenLabs voice; override with ELEVENLABS_VOICE_ID once a cuter one is picked.
@@ -21,7 +21,11 @@ export async function speak(text: string): Promise<string> {
   const dir = join(app.getPath('userData'), 'tts-cache')
   mkdirSync(dir, { recursive: true })
   const file = join(dir, createHash('sha1').update(`${voice}|${model}|${JSON.stringify(settings)}|${text}`).digest('hex') + '.mp3')
-  if (existsSync(file)) return readFileSync(file).toString('base64')
+  const cached = existsSync(file)
+  try {
+    appendFileSync(join(dir, '..', 'tts.log'), `${new Date().toISOString()} voice=${voice} model=${model} cached=${cached} chars=${text.length}\n`)
+  } catch { /* logging is best effort */ }
+  if (cached) return readFileSync(file).toString('base64')
 
   const res = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`,
